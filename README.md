@@ -13,7 +13,7 @@
 | Engine | Thư viện | Làm gì | Tin cậy |
 |---|---|---|---|
 | **dex** | androguard | Khớp trên **lệnh thật** (`invoke-*`, `const-string`, `iget/sget`). Có call graph và đường gọi từ component trong manifest (kể cả callback như Thread/AsyncTask/listener). Theo dõi hằng trong thanh ghi để giải tên đích reflection. Phát hiện hàm giải mã string. Combo hành vi. | ●●○ / ●●● |
-| **native** | lief + capstone | Imports/exports thật. Phân giải PLT nên ra **call site** của `ptrace`, `strstr`... Xref chuỗi (`adrp+add`, `lea [rip+x]`). Call graph native gồm cả con trỏ hàm (`pthread_create(.., fn)`). Root: `JNI`, `JNI_OnLoad`, `.init_array`. Entropy, section header bị xóa. | ●●○ |
+| **native** | lief + capstone | Imports/exports thật. Phân giải PLT nên ra **call site** của `ptrace`, `strstr`... Xref chuỗi (`adrp+add`, `adr`, `lea [rip+x]`, literal pool ARM32). ARM32: tự nhận hàm ARM hay Thumb. Call graph native gồm cả con trỏ hàm (`pthread_create(.., fn)`). Root: `JNI`, `JNI_OnLoad`, `.init_array`. Entropy, section header bị xóa. | ●●○ |
 | **flow** (trong dex) | tự viết | Taint/value-flow liên thủ tục: theo **chính giá trị** từ nguồn (IMEI, Intent extra...) qua biến, field, method, object tới đích (mạng, SQL, exec...). Dùng CHA + vòng đời/callback. Cũng giải hằng cho reflection và cặp key/ciphertext cho crypto. | ●●● |
 | **emu** (trong native) | unicorn | Chạy `.init_array` + `JNI_OnLoad` với JNIEnv giả, quét từng hàm: lấy chuỗi giải mã lúc init, stack string, đối số `strcmp/strstr...`, `RegisterNatives`. arm64 + x86_64. | ●●● |
 | **text** | regex | Fallback: manifest, resource, danh sách file, và source khi không có bytecode. Comment bị loại trước khi khớp. | ●○○ |
@@ -125,16 +125,88 @@ Cách làm: dựng IR từ bytecode → call graph CHA (dispatch ảo/interface,
 handler `android:onClick` trong layout, AsyncTask, `Method.invoke` đã giải được) → phân tích từng method theo
 thứ tự ngược (callee trước), sinh **summary** (tham số → return / sink / field), lặp tới điểm bất động.
 Có mô hình cho StringBuilder/collection, SharedPreferences/Bundle (theo key), exception, gấp hằng số và
-bỏ nhánh chết. Để chạy nhanh: chỉ phân tích code app (không thư viện), chỉ lát cắt quanh nguồn/đích, có ngân sách thời gian.
+bỏ nhánh chết. Để giảm báo nhầm:
+- **Container theo key/chỉ số**: `map.put("imei", id); map.get("name")`, JSONObject, ContentValues, Bundle, mảng có
+  chỉ số hằng (kể cả mảng lưu trong field) không bị coi là bẩn; dùng cả object (`json.toString()`) thì vẫn bẩn.
+- **List theo thứ tự `add`** (biến cục bộ): `l.add("a"); l.add(id); l.get(0)` không bẩn. Qua vòng lặp, `remove`
+  hay `add(i, x)` thì không còn biết thứ tự nên coi cả list là bẩn.
+- **Exception**: giá trị bẩn trong exception ném ra khỏi method đi tới đúng `catch` bao quanh lời gọi ở method gọi.
+  Mỗi `catch` có kho riêng, nên exception được bắt ngay trong method con không làm bẩn `catch` khác.
+- **SharedPreferences / Bundle**: `getString(k)` với key không phải hằng (duyệt `getAll()`, listener
+  `onSharedPreferenceChanged`) đọc được mọi key. `onSaveInstanceState` → `onRestoreInstanceState` cũng được nối.
+- **Gấp hằng chuỗi** cho reflection: `StringBuilder.reverse()`, `substring`, `replace`, `toLowerCase`...
+  (`"dIeciveDteg"` đảo ngược thành `getDeviceId`, rồi `Method.invoke` được coi là nguồn).
+- **Dispatch theo kiểu thật**: `Provider p = factory(); p.get()` chỉ gọi hiện thực của object mà factory thực sự tạo.
+- **Opaque predicate**: khoảng giá trị (`nextInt(n)` ∈ [0, n-1], `length()` ≥ 0) để bỏ nhánh `if`/`switch` không bao giờ chạy. Để chạy nhanh: chỉ phân tích code app (không thư viện), chỉ lát cắt quanh nguồn/đích, có ngân sách thời gian.
 
 Kiểm tra trên DroidBench (177 APK, mức app):
 
 | Cách | Precision | Recall | F1 |
 |---|---|---|---|
 | combo cũ | 0.78 | 0.63 | 0.69 |
-| flow (v0.3) | 0.88 | 0.85 | 0.86 |
+| flow, chưa có JNI | 0.93 | 0.86 | 0.89 |
+| flow + JNI | 0.94 | 0.89 | 0.91 |
+| + exception, list, prefs, gấp hằng chuỗi (v0.3) | 0.94 | 0.93 | 0.93 |
+
+**Luồng giữa các component (ICC).** Tool theo dõi đích của Intent: `new Intent(ctx, B.class)`, `setClass`,
+`setClassName`, `setComponent`, `X.class.getName()`, `obj.getClass()`, hoặc action khớp `<intent-filter>`.
+Dữ liệu `putExtra` ở A sẽ xuất hiện lại ở `getIntent()` / `onReceive(.., intent)` / `onStartCommand(intent, ..)` của B.
+Messenger/Handler (`send(msg)` → `handleMessage`) cũng được nối.
+- Phân biệt key: `putExtra("imei", x)` chỉ đi tới `getStringExtra("imei")`, không tới `getStringExtra("title")`.
+- Receiver đăng ký lúc chạy: `registerReceiver(new R(), new IntentFilter("ACTION"))` (bỏ qua nếu có `RECEIVER_NOT_EXPORTED`).
+- `startActivityForResult(A → B)` + `setResult` trong B → `onActivityResult` của A (đúng cặp).
+- `setPackage(getPackageName())` = Intent chỉ trong app; `setResult` trong component không exported không bị coi là rò rỉ.
+- Intent tường minh tới component nội bộ không còn bị báo là "rò rỉ" ở `startActivity`; tool theo tiếp sang B.
+- Đích không có trong manifest thì bỏ, vì Android không khởi chạy được component đó.
+- Không rõ đích (Intent đi qua list/tham số) thì vẫn báo ở chỗ gửi, và đi tiếp tới mọi component của app với ghi chú "Intent không rõ đích".
+- Với rule pentest, Intent chỉ được coi là "dữ liệu do app khác gửi" khi component **exported**. Component nội bộ chỉ bị báo nếu
+  dữ liệu được chuyển tới từ một component exported:
+  `EntryActivity.onCreate ⇢(Intent: EntryActivity.onCreate+0x32 → WorkerService) → WorkerService.onStartCommand`.
+
+DroidBench nhóm ICC: 21/27 app ra được đích thật bên component nhận (trước: 5/27).
+
+**Luồng qua JNI (Java ↔ native).** Mỗi method `native` được nối với hàm hiện thực: export `Java_*` (cả bản overload
+`__sig`) hoặc `RegisterNatives` trong `JNI_OnLoad` (tìm bằng giả lập, kể cả hàm static đã strip). Từ mã máy, tool lấy:
+- **method Java mà native gọi qua JNI**: ghép chuỗi tên + chữ ký đứng cạnh nhau (`"getDeviceId"`, `"()Ljava/lang/String;"`),
+  class lấy từ chuỗi `FindClass` gần nhất. Nếu app có method trùng tên + chữ ký thì cũng coi là đích, vì `GetObjectClass` không để lại chuỗi;
+- **hàm libc tới được** (3 tầng call graph): `send/write/fwrite/__android_log_print...`, `system/popen/exec*`.
+
+Khi Java gọi method native, tool xấp xỉ bằng một "bể dữ liệu" gồm:
+- đối số của method native;
+- **nguồn mà native tự đọc** (vd `getDeviceId` qua JNI);
+- giá trị trả về của **method Java mà native gọi ngược**. Các method này được phân tích như đích gọi thật: đối số của chúng lấy từ bể.
+
+Bể chảy vào đích native gọi tới (`SmsManager.sendTextMessage` qua JNI hoặc `native.libc.send`) và vào giá trị trả về:
+```
+match: getDeviceId() ⟶ native.libc.sendto
+  Đích nằm trong mã native: libt7.so!sub_1102c gọi native.libc.sendto (hàm libc) ...
+  Hook: Interceptor.attach(Process.getModuleByName('libt7.so').base.add(0x1102c), ...)
+Đường dữ liệu: MainActivity.onCreate ⇢(JNI: libt7.so!Java_..._relay gọi ngược) → MainActivity.onData
+```
+Bên trong mã máy không theo từng thanh ghi: mọi đối số coi như tới được mọi đích mà hàm native gọi tới.
+DroidBench nhóm Native: 5/5 (trước: 1/5).
 
 Rule: `FLOW-PRIVACY-LEAK`, `FLOW-RCE`, `FLOW-SQLI`, `FLOW-WEBVIEW-LOAD`, `FLOW-PATH-TRAVERSAL`, `FLOW-INTENT-REDIRECT`.
+Đích native dùng chữ ký giả `Lnative/libc;-><hàm>()V`, nên có thể thêm vào `sink:` của rule.
+
+## Payload DEX ẩn (dropper / packer)
+
+Khi nạp APK, rdict đọc 8 byte đầu của **mọi** file (không xét đuôi, vì payload hay đội lốt `.png`/`.bin`). Các dạng tìm được:
+- DEX trần;
+- zip/jar/apk chứa DEX (lồng tối đa 2 tầng);
+- DEX/zip bị **XOR 1 byte** (key tự suy ra từ magic).
+
+Class trong payload được nạp chung vào bộ phân tích với code chính. Vì vậy call graph, CHA, reflection (`loadClass("…").getMethod("run").invoke`), luồng dữ liệu
+và mọi rule khác đều chạy xuyên qua code được nạp động:
+```
+[HIGH] OB-PAYLOAD-DEX   assets/data.bin → 1 class
+     ℹ Payload: assets/data.bin (1396 byte, giải XOR 1 byte (key 0x5a)), 1 class — gói: com.evil
+[HIGH] FLOW-PRIVACY-LEAK  com.evil.Stealer.run()
+     ↳ đường gọi: MainActivity.onCreate → ⇢(reflection) Stealer.run
+     ℹ 📦 Code nằm trong payload ẩn assets/data.bin (nạp động lúc chạy)
+```
+DroidBench nhóm DynamicLoading: 4/4 (trước: 2/4). Payload mã hóa mạnh hơn (AES, nén tùy biến) thì không giải tĩnh được:
+dùng Frida hook `DexClassLoader` để dump.
 
 ## Giả lập native (unicorn)
 
@@ -142,6 +214,11 @@ Rule: `FLOW-PRIVACY-LEAK`, `FLOW-RCE`, `FLOW-SQLI`, `FLOW-WEBVIEW-LOAD`, `FLOW-P
 - `NAT-STACK-STRING`: chuỗi được dựng từng byte trên stack (không nằm sẵn trong file).
 - `NAT-CMP-CONST`: đối số thật của `strcmp/strncmp/strstr/memcmp/fopen...`, ví dụ UnCrackable L2 → `strncmp(…, 'Thanks for all the fish')`.
 - `NAT-REGISTER-NATIVES`: method Java ↔ hàm native đăng ký động; `NAT-JNI-BRIDGE` cũng dùng kết quả này.
+
+Kiểm thử: `tests/regress.sh` (build app test t2–t8 rồi kiểm tra rule mong đợi; t7 cần `pip install ziglang` trong
+`.venv` để biên dịch chéo `libt7.so` arm64), `tests/flowtags.py app.apk [-v]` (liệt kê luồng theo tag, `-v` in tóm tắt JNI),
+`bench/run.py out.json` (`NO_NATIVE=1` để tắt nạp lib native)
+(DroidBench, clone vào `~/.cache/rdict/bench/DroidBench`; `bench/dbg.py <app>` để xem chi tiết luồng), `tests/flowtags.py <apk>` (liệt kê luồng theo tag của sink).
 
 ## Viết rule
 
@@ -188,15 +265,18 @@ rules:
 
 Builtin (logic Python, không viết được bằng regex): `reflection`, `string_decryptor`, `insecure_tls`,
 `jni_bridge`, `crypto_autodecrypt`, `exported_components`, `native_init_array`, `native_entropy`, `native_stripped`,
-`native_cmp_const`, `native_stack_strings`, `native_init_decrypt`, `native_register_natives`.
+`native_cmp_const`, `native_stack_strings`, `native_init_decrypt`, `native_register_natives`, `payload_dex`.
 
 ## Hạn chế / hướng phát triển
 
-- Phân tích luồng: không theo luồng ngầm (`if (imei.startsWith("3")) send("1")`), chưa nối luồng qua ICC
-  (Intent giữa các component), field/mảng không phân biệt object/chỉ số (có thể báo dư), code nạp động/native không theo được.
+- Phân tích luồng: không theo luồng ngầm (`if (imei.startsWith("3")) send("1")`). ICC: Intent tạo bằng reflection
+  (`Constructor.newInstance`) hoặc lấy ra từ list/tham số thì không rõ đích; Bundle trong extra (`getExtras().getString(k)`)
+  chưa phân biệt key; chưa nối luồng giữa 2 app khác nhau. List lưu trong field chưa phân biệt phần tử; field vẫn
+  không phân biệt object (2 object cùng class dùng chung field); thứ tự đọc/ghi field không được xét. Code nạp động chỉ theo được khi payload nằm sẵn trong APK (dạng trần, zip hoặc XOR 1 byte); native chỉ xấp xỉ
+  (xem phần JNI): chuỗi tên method bị mã hóa trong `.so` thì không ghép được, trừ khi giả lập dựng ra trên stack.
   App lớn có thể chạm ngân sách thời gian (báo cáo ghi "truncated").
 - Giả lập native: quét tuyến tính từng hàm, không giải điều kiện; hàm cần dữ liệu từ Java/thiết bị có thể không ra chuỗi.
-  Phần init chỉ kiểm thử trên x86_64; chưa hỗ trợ ARM32.
-- Native: xref chuỗi chưa hỗ trợ ARM32 Thumb (literal pool). ABI ưu tiên arm64 → x86_64 → armv7.
+  Giả lập chưa hỗ trợ ARM32 (phân tích tĩnh ARM32 thì có).
+- Native: ABI ưu tiên arm64 → armv7 → armeabi → x86_64 → x86 (khi bench/test tự giải nén lib).
 - Giải mã string Java không chuẩn cần thiết bị + Frida; chưa hỗ trợ tham số mảng.
 - Chưa có: hỗ trợ IPA/PE/ELF Linux, rule YARA cho native.

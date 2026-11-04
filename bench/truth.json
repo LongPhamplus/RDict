@@ -1,0 +1,1064 @@
+[
+ {
+  "name": "ActivityCommunication1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ActivityCommunication1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityCommunication2",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ActivityCommunication2.apk",
+  "leaks": 2
+ },
+ {
+  "name": "ActivityCommunication3",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ActivityCommunication3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityCommunication4",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ActivityCommunication4.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityCommunication5",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ActivityCommunication5.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityCommunication6",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ActivityCommunication6.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityCommunication7",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ActivityCommunication7.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityCommunication8",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ActivityCommunication8.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityEventSequence1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ActivityEventSequence1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityEventSequence2",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ActivityEventSequence2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityEventSequence3",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ActivityEventSequence3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityLifecycle1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ActivityLifecycle1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityLifecycle2",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ActivityLifecycle2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityLifecycle3",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ActivityLifecycle3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivityLifecycle4",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ActivityLifecycle4.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ActivitySavedState1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ActivitySavedState1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "AllReflection",
+  "cat": "Reflection_ICC",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection_ICC/AllReflection.apk",
+  "leaks": 1
+ },
+ {
+  "name": "AnonymousClass1",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/AnonymousClass1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "ApplicationLifecycle1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ApplicationLifecycle1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ApplicationLifecycle2",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ApplicationLifecycle2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ApplicationLifecycle3",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ApplicationLifecycle3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ApplicationModeling1",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/ApplicationModeling1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ArrayAccess1",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/ArrayAccess1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "ArrayAccess2",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/ArrayAccess2.apk",
+  "leaks": 0
+ },
+ {
+  "name": "ArrayAccess3",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/ArrayAccess3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ArrayAccess4",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/ArrayAccess4.apk",
+  "leaks": 0
+ },
+ {
+  "name": "ArrayAccess5",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/ArrayAccess5.apk",
+  "leaks": 0
+ },
+ {
+  "name": "ArrayCopy1",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/ArrayCopy1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ArrayToString1",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/ArrayToString1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "AsyncTask1",
+  "cat": "Threading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Threading/AsyncTask1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "AsynchronousEventOrdering1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/AsynchronousEventOrdering1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Battery1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/Battery1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Bluetooth1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/Bluetooth1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "BroadcastReceiverLifecycle1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/BroadcastReceiverLifecycle1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "BroadcastReceiverLifecycle2",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/BroadcastReceiverLifecycle2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "BroadcastReceiverLifecycle3",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/BroadcastReceiverLifecycle3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "BroadcastTaintAndLeak1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/BroadcastTaintAndLeak1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Build1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/Build1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Button1",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/Button1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Button2",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/Button2.apk",
+  "leaks": 3
+ },
+ {
+  "name": "Button3",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/Button3.apk",
+  "leaks": 2
+ },
+ {
+  "name": "Button4",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/Button4.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Button5",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/Button5.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Clone1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Clone1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ComponentNotInManifest1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ComponentNotInManifest1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "Contacts1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/Contacts1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ContentProvider1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/ContentProvider1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "DeviceId1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/DeviceId1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "DirectLeak1",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/DirectLeak1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "DynamicBoth1",
+  "cat": "DynamicLoading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/DynamicLoading/DynamicBoth1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "DynamicSink1",
+  "cat": "DynamicLoading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/DynamicLoading/DynamicSink1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "DynamicSource1",
+  "cat": "DynamicLoading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/DynamicLoading/DynamicSource1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Echoer",
+  "cat": "InterAppCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterAppCommunication/Echoer.apk",
+  "leaks": 3
+ },
+ {
+  "name": "EventOrdering1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/EventOrdering1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "Exceptions1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Exceptions1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Exceptions2",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Exceptions2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Exceptions3",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Exceptions3.apk",
+  "leaks": 0
+ },
+ {
+  "name": "Exceptions4",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Exceptions4.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Exceptions5",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Exceptions5.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Exceptions6",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Exceptions6.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Exceptions7",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Exceptions7.apk",
+  "leaks": 0
+ },
+ {
+  "name": "Executor1",
+  "cat": "Threading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Threading/Executor1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "FactoryMethods1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/FactoryMethods1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "FieldSensitivity1",
+  "cat": "FieldAndObjectSensitivity",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/FieldAndObjectSensitivity/FieldSensitivity1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "FieldSensitivity2",
+  "cat": "FieldAndObjectSensitivity",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/FieldAndObjectSensitivity/FieldSensitivity2.apk",
+  "leaks": 0
+ },
+ {
+  "name": "FieldSensitivity3",
+  "cat": "FieldAndObjectSensitivity",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/FieldAndObjectSensitivity/FieldSensitivity3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "FieldSensitivity4",
+  "cat": "FieldAndObjectSensitivity",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/FieldAndObjectSensitivity/FieldSensitivity4.apk",
+  "leaks": 0
+ },
+ {
+  "name": "File1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/File1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "FlowSensitivity1",
+  "cat": "Aliasing",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Aliasing/FlowSensitivity1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "FragmentLifecycle1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/FragmentLifecycle1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "FragmentLifecycle2",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/FragmentLifecycle2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "HashMapAccess1",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/HashMapAccess1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "IMEI1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/IMEI1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "IP1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/IP1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ImplicitFlow1",
+  "cat": "ImplicitFlows",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ImplicitFlows/ImplicitFlow1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ImplicitFlow2",
+  "cat": "ImplicitFlows",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ImplicitFlows/ImplicitFlow2.apk",
+  "leaks": 2
+ },
+ {
+  "name": "ImplicitFlow3",
+  "cat": "ImplicitFlows",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ImplicitFlows/ImplicitFlow3.apk",
+  "leaks": 2
+ },
+ {
+  "name": "ImplicitFlow4",
+  "cat": "ImplicitFlows",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ImplicitFlows/ImplicitFlow4.apk",
+  "leaks": 2
+ },
+ {
+  "name": "ImplicitFlow5",
+  "cat": "ImplicitFlows",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ImplicitFlows/ImplicitFlow5.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ImplicitFlow6",
+  "cat": "ImplicitFlows",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ImplicitFlows/ImplicitFlow6.apk",
+  "leaks": 0
+ },
+ {
+  "name": "InactiveActivity",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/InactiveActivity.apk",
+  "leaks": 0
+ },
+ {
+  "name": "InheritedObjects1",
+  "cat": "FieldAndObjectSensitivity",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/FieldAndObjectSensitivity/InheritedObjects1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "IntentSink1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/IntentSink1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "IntentSink2",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/IntentSink2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "IntentSource1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/IntentSource1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "JavaIDFunction",
+  "cat": "Native",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Native/JavaIDFunction.apk",
+  "leaks": 1
+ },
+ {
+  "name": "JavaThread1",
+  "cat": "Threading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Threading/JavaThread1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "JavaThread2",
+  "cat": "Threading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Threading/JavaThread2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Library2",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/Library2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ListAccess1",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/ListAccess1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "LocationLeak1",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/LocationLeak1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "LocationLeak2",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/LocationLeak2.apk",
+  "leaks": 2
+ },
+ {
+  "name": "LocationLeak3",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/LocationLeak3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "LogNoLeak",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/LogNoLeak.apk",
+  "leaks": 0
+ },
+ {
+  "name": "Loop1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Loop1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Loop2",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Loop2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Looper1",
+  "cat": "Threading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Threading/Looper1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Merge1",
+  "cat": "Aliasing",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Aliasing/Merge1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "MethodOverride1",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/MethodOverride1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "MultiHandlers1",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/MultiHandlers1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "MultidimensionalArray1",
+  "cat": "ArraysAndLists",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/ArraysAndLists/MultidimensionalArray1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "NativeIDFunction",
+  "cat": "Native",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Native/NativeIDFunction.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Obfuscation1",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/Obfuscation1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ObjectSensitivity1",
+  "cat": "FieldAndObjectSensitivity",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/FieldAndObjectSensitivity/ObjectSensitivity1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "ObjectSensitivity2",
+  "cat": "FieldAndObjectSensitivity",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/FieldAndObjectSensitivity/ObjectSensitivity2.apk",
+  "leaks": 0
+ },
+ {
+  "name": "OnlyIntent",
+  "cat": "Reflection_ICC",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection_ICC/OnlyIntent.apk",
+  "leaks": 1
+ },
+ {
+  "name": "OnlyIntentReceive",
+  "cat": "Reflection_ICC",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection_ICC/OnlyIntentReceive.apk",
+  "leaks": 1
+ },
+ {
+  "name": "OnlySMS",
+  "cat": "Reflection_ICC",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection_ICC/OnlySMS.apk",
+  "leaks": 1
+ },
+ {
+  "name": "OnlyTelephony",
+  "cat": "Reflection_ICC",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection_ICC/OnlyTelephony.apk",
+  "leaks": 1
+ },
+ {
+  "name": "OnlyTelephony_Dynamic",
+  "cat": "Reflection_ICC",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection_ICC/OnlyTelephony_Dynamic.apk",
+  "leaks": 2
+ },
+ {
+  "name": "OnlyTelephony_Reverse",
+  "cat": "Reflection_ICC",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection_ICC/OnlyTelephony_Reverse.apk",
+  "leaks": 1
+ },
+ {
+  "name": "OnlyTelephony_Substring",
+  "cat": "Reflection_ICC",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection_ICC/OnlyTelephony_Substring.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Ordering1",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/Ordering1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "PI1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/PI1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Parcel1",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/Parcel1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "PlayStore1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/PlayStore1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "PlayStore2",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/PlayStore2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "PrivateDataLeak1",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/PrivateDataLeak1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "PrivateDataLeak2",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/PrivateDataLeak2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "PrivateDataLeak3",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/PrivateDataLeak3.apk",
+  "leaks": 2
+ },
+ {
+  "name": "PublicAPIField1",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/PublicAPIField1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "PublicAPIField2",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/PublicAPIField2.apk",
+  "leaks": 2
+ },
+ {
+  "name": "Reflection1",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection10",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection10.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection10-NoFlow",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection10-NoFlow.apk",
+  "leaks": 0
+ },
+ {
+  "name": "Reflection2",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection3",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection4",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection4.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection5",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection5.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection6",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection6.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection7",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection7.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection8",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection8.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Reflection9",
+  "cat": "Reflection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Reflection/Reflection9.apk",
+  "leaks": 1
+ },
+ {
+  "name": "RegisterGlobal1",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/RegisterGlobal1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "RegisterGlobal2",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/RegisterGlobal2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SendSMS",
+  "cat": "InterAppCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterAppCommunication/SendSMS.apk",
+  "leaks": 3
+ },
+ {
+  "name": "Sensors1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/Sensors1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "Serialization1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/Serialization1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ServiceCommunication1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/ServiceCommunication1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ServiceEventSequence1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ServiceEventSequence1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ServiceEventSequence2",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ServiceEventSequence2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ServiceEventSequence3",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ServiceEventSequence3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ServiceLifecycle1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ServiceLifecycle1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "ServiceLifecycle2",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/ServiceLifecycle2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SharedPreferenceChanged1",
+  "cat": "Lifecycle",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Lifecycle/SharedPreferenceChanged1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SharedPreferences1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/SharedPreferences1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "SimpleAliasing1",
+  "cat": "Aliasing",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Aliasing/SimpleAliasing1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SimpleUnreachable1",
+  "cat": "UnreachableCode",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/UnreachableCode/SimpleUnreachable1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "Singletons1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/Singletons1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SinkInNativeCode",
+  "cat": "Native",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Native/SinkInNativeCode.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SinkInNativeLibCode",
+  "cat": "Native",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Native/SinkInNativeLibCode.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SourceCodeSpecific1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/SourceCodeSpecific1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SourceInNativeCode",
+  "cat": "Native",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Native/SourceInNativeCode.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StartActivityForResult1",
+  "cat": "InterAppCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterAppCommunication/StartActivityForResult1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StartProcessWithSecret1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/StartProcessWithSecret1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StaticInitialization1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/StaticInitialization1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StaticInitialization2",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/StaticInitialization2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StaticInitialization3",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/StaticInitialization3.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StringFormatter1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/StringFormatter1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StringPatternMatching1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/StringPatternMatching1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StringToCharArray1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/StringToCharArray1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StringToOutputStream1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/StringToOutputStream1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "StrongUpdate1",
+  "cat": "Aliasing",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Aliasing/StrongUpdate1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "SubscriberId1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/SubscriberId1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "TimerTask1",
+  "cat": "Threading",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Threading/TimerTask1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "UnreachableBoth",
+  "cat": "UnreachableCode",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/UnreachableCode/UnreachableBoth.apk",
+  "leaks": 0
+ },
+ {
+  "name": "UnreachableCode",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/UnreachableCode.apk",
+  "leaks": 0
+ },
+ {
+  "name": "UnreachableSink1",
+  "cat": "UnreachableCode",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/UnreachableCode/UnreachableSink1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "UnreachableSource1",
+  "cat": "UnreachableCode",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/UnreachableCode/UnreachableSource1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "Unregister1",
+  "cat": "Callbacks",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/Callbacks/Unregister1.apk",
+  "leaks": 0
+ },
+ {
+  "name": "UnresolvableIntent1",
+  "cat": "InterComponentCommunication",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/InterComponentCommunication/UnresolvableIntent1.apk",
+  "leaks": 2
+ },
+ {
+  "name": "View1",
+  "cat": "AndroidSpecific",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/AndroidSpecific/View1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "VirtualDispatch1",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/VirtualDispatch1.apk",
+  "leaks": 1
+ },
+ {
+  "name": "VirtualDispatch2",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/VirtualDispatch2.apk",
+  "leaks": 1
+ },
+ {
+  "name": "VirtualDispatch3",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/VirtualDispatch3.apk",
+  "leaks": 0
+ },
+ {
+  "name": "VirtualDispatch4",
+  "cat": "GeneralJava",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/GeneralJava/VirtualDispatch4.apk",
+  "leaks": 0
+ },
+ {
+  "name": "VoiceMail1",
+  "cat": "EmulatorDetection",
+  "apk": "~/.cache/rdict/bench/DroidBench/apk/EmulatorDetection/VoiceMail1.apk",
+  "leaks": 1
+ }
+]

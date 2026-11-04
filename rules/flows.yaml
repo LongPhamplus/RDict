@@ -6,6 +6,8 @@
 #              'cb:<regex chữ ký>'    tham số của callback override method framework này là nguồn
 #              'field:<regex field>'] đọc field này là nguồn
 #     sink:   ['<regex chữ ký>']      đối số (trừ receiver) bị bẩn khi gọi API này -> báo
+# Method native (JNI): API Java mà mã native gọi qua GetMethodID cũng khớp source/sink như gọi từ Java;
+# hàm libc mà mã native gọi tới có chữ ký giả 'Lnative/libc;-><tên>()V'.
 x-priv-src: &priv_src
   - 'api:Landroid/telephony/TelephonyManager;->(?:getDeviceId|getImei|getMeid|getSubscriberId|getSimSerialNumber|getLine1Number|getVoiceMailNumber|getCellLocation|getAllCellInfo)\('
   - 'api:Landroid/location/LocationManager;->(?:getLastKnownLocation|getCurrentLocation)\('
@@ -28,6 +30,11 @@ x-leak-sink: &leak_sink
   - 'Lokhttp3/Request\$Builder;->(?:url|header|post)\('
   - 'Landroid/webkit/WebView;->(?:loadUrl|postUrl|loadData\w*|evaluateJavascript)\('
   - '->(?:startActivit\w*|startService|sendBroadcast\w*|sendOrderedBroadcast|bindService|setResult)\((?:I )?Landroid/content/Intent;'
+  # dữ liệu riêng tư làm tham số lệnh hệ thống (curl/sh -c ... gửi ra ngoài)
+  - 'Ljava/lang/Runtime;->exec\('
+  - 'Ljava/lang/ProcessBuilder;->(?:<init>|command)\('
+  # dữ liệu truyền vào method native mà mã native gọi tới hàm libc ghi ra ngoài (socket / file / logcat)
+  - '^Lnative/libc;->(?:send|sendto|sendmsg|write|writev|pwrite|fwrite|fputs|fprintf|dprintf|__android_log_\w+)\('
 x-ext-src: &ext_src
   - 'api:->getIntent\(\)Landroid/content/Intent;'
   - 'api:Landroid/content/Intent;->(?:get\w*Extra\w*|getExtras|getData\w*|getAction)\('
@@ -70,6 +77,7 @@ rules:
         - 'Ljava/lang/Runtime;->exec\('
         - 'Ljava/lang/ProcessBuilder;-><init>\('
         - 'Ljava/lang/ProcessBuilder;->command\('
+        - '^Lnative/libc;->(?:system|popen|exec[lv]\w*)\('
 
   - id: FLOW-SQLI
     name: Dữ liệu từ Intent/Provider đi vào câu SQL (SQL injection)

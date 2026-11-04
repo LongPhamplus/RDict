@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.rdict.t5">
+  <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34"/>
+  <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+  <application android:label="t5">
+    <activity android:name=".EntryActivity" android:exported="true"/>
+    <activity android:name=".LeakActivity" android:exported="true"/>
+    <activity android:name=".ShowActivity" android:exported="false"/>
+    <activity android:name=".KeyActivity" android:exported="true"/>
+    <activity android:name=".KeySink"/>
+    <activity android:name=".PickActivity"/>
+    <service android:name=".WorkerService" android:exported="false"/>
+    <receiver android:name=".UploadReceiver" android:exported="false">
+      <intent-filter><action android:name="com.rdict.t5.UPLOAD"/></intent-filter>
+    </receiver>
+  </application>
+</manifest>

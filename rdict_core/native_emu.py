@@ -176,6 +176,10 @@ class Emu:
             return None
         return d.decode("latin-1")
 
+    def _ident(self, a) -> str | None:
+        d = self.rd(a, 128).split(b"\0", 1)[0] if a and a >= 0x1000 else b""
+        return d.decode() if re.fullmatch(rb"[A-Za-z_$<][\w$<>]*", d) else None
+
     def arg(self, i):
         if i < len(self.ARGS):
             return self.uc.reg_read(self.ARGS[i])
@@ -266,7 +270,7 @@ class Emu:
                 if len(e) < 24:
                     break
                 pn, ps, fp = struct.unpack("<QQQ", e)
-                nm, sg = self.cstr(pn), self.cstr(ps)
+                nm, sg = self._ident(pn), self.cstr(ps)     # tên method có thể chỉ 1 ký tự (obfuscate: a, z...)
                 if nm:
                     self.res.natives.append((nm, sg or "", (fp - BASE) & ~1 if fp >= BASE else fp))
             r = 0

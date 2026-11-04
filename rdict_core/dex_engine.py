@@ -115,10 +115,64 @@ def pretty_sig(sig: str) -> str:
 def needle_of(kind: str, key: str) -> str:
     if kind == "api":
         n = key.split("->", 1)[1].split("(", 1)[0]
-        return key.split("->")[0].rsplit("/", 1)[-1].rstrip(";").split("$")[-1] if n == "<init>" else n
+        return (key.split("->")[0].rsplit("/", 1)[-1].rstrip(";").split("$")[-1] if n == "<init>" else n) + "("
     if kind == "field":
         return key.split("->", 1)[1].split(" ", 1)[0]
     return key[:40]
+
+
+# hàm libc mà dữ liệu đi vào là "thoát ra ngoài" (mạng / file / log / lệnh hệ thống)
+NATIVE_SINK_IMPS = {"send", "sendto", "sendmsg", "write", "writev", "pwrite", "fwrite", "fputs", "fprintf", "dprintf",
+                    "__android_log_print", "__android_log_write", "__android_log_vprint", "__android_log_buf_write",
+                    "system", "popen", "execl", "execlp", "execle", "execv", "execvp", "execve",
+                    "fopen", "open", "openat", "creat"}
+
+
+DEX_MAGIC = b"dex\n"
+ZIP_MAGIC = b"PK\x03\x04"
+MAX_PAYLOAD = 64 * 1024 * 1024
+
+
+def _xor1(data: bytes, magic: bytes) -> int | None:
+    """Key XOR 1 byte nếu data là magic bị XOR (payload mã hóa đơn giản), không thì None."""
+    if len(data) < 16:
+        return None
+    k = data[0] ^ magic[0]
+    if k and all(data[i] ^ k == magic[i] for i in range(len(magic))):
+        return k
+    return None
+
+
+def find_payloads(files: dict, depth: int = 2) -> list[tuple[str, str, bytes]]:
+    """Tìm DEX ẩn: files = {tên: bytes}. -> [(đường dẫn, cách tìm ra, bytes dex)].
+    Nhận theo magic (không theo đuôi file): dex trần, zip/jar/apk chứa dex, hoặc dex/zip bị XOR 1 byte."""
+    import io
+    import zipfile
+    out = []
+    for name, data in files.items():
+        if not data or len(data) > MAX_PAYLOAD:
+            continue
+        how = None
+        k = None
+        if data[:4] != DEX_MAGIC and data[:4] != ZIP_MAGIC:
+            for mg in (DEX_MAGIC, ZIP_MAGIC):
+                if (k := _xor1(data, mg)) is not None:
+                    data = bytes(b ^ k for b in data)
+                    how = f"giải XOR 1 byte (key 0x{k:02x})"
+                    break
+        if data[:4] == DEX_MAGIC and data[4:7].isdigit():
+            out.append((name, how or "magic DEX", data))
+        elif data[:4] == ZIP_MAGIC and depth > 0:
+            try:
+                z = zipfile.ZipFile(io.BytesIO(data))
+                inner = {n: z.read(n) for n in z.namelist()
+                         if not n.endswith("/") and z.getinfo(n).file_size <= MAX_PAYLOAD
+                         and (n.endswith((".dex", ".jar", ".apk", ".zip")) or z.getinfo(n).file_size > 1024)}
+            except Exception:
+                continue
+            for n2, h2, d2 in find_payloads(inner, depth - 1):
+                out.append((f"{name}!{n2}", ", ".join(x for x in (how, "trong zip", h2) if x), d2))
+    return out
 
 
 def jni_mangle(s: str) -> str:
@@ -141,15 +195,18 @@ def jni_mangle(s: str) -> str:
 
 class DexEngine:
     def __init__(self, path: Path, sources_root: Path | None, include_libs: bool = False):
+        self.payloads: list[dict] = []                     # DEX ẩn trong APK (assets/res/...) đã nạp chung
+        self.payload_of: dict[str, str] = {}               # class -> payload chứa nó
         if path.suffix.lower() == ".dex":
             _, _, self.dx = AnalyzeDex(str(path))
             self.apk = None
         else:
-            self.apk, _, self.dx = AnalyzeAPK(str(path))
+            self.apk, self.dx = self._load_apk(path)
         self.sources_root = sources_root
         self.include_libs = include_libs
         self.flow_libs = False          # phân tích luồng cả code thư viện (--flow-libs)
         self.flow_budget = 180.0
+        self.flow_rounds = 16
         self.inv: dict[str, list] = defaultdict(list)      # sig -> [(ma, off)]
         self.strs: dict[str, list] = defaultdict(list)     # string -> [(ma, off)]
         self.flds: dict[str, list] = defaultdict(list)     # field -> [(ma, off)]
@@ -168,6 +225,51 @@ class DexEngine:
         self._inits: dict[str, list] = defaultdict(list)
         self.entry_classes = self._entries()
         self._build()
+
+    def _load_apk(self, path: Path):
+        """Như AnalyzeAPK, nhưng nạp thêm DEX ẩn (payload dropper / packer) vào cùng Analysis để call graph,
+        CHA, reflection và taint đi xuyên qua code được nạp động."""
+        from androguard.core import apk as _apk, dex as _dex
+        from androguard.core.analysis.analysis import Analysis
+        a = _apk.APK(str(path))
+        dx = Analysis()
+        main = set()
+        for b in a.get_all_dex():
+            df = _dex.DEX(b, using_api=a.get_target_sdk_version())
+            dx.add(df)
+            main.update(c.get_name() for c in df.get_classes())
+        import zipfile
+        root_dex = re.compile(r"^classes\d*\.dex$")
+        files = {}
+        try:                                     # chỉ đọc 8 byte đầu mỗi file; không xét đuôi (payload hay đội lốt .png)
+            with zipfile.ZipFile(str(path)) as z:
+                for zi in z.infolist():
+                    n = zi.filename
+                    if zi.is_dir() or root_dex.match(n) or n.startswith("META-INF/") or zi.file_size < 64 \
+                            or zi.file_size > MAX_PAYLOAD or (n.startswith("lib/") and n.endswith(".so")):
+                        continue
+                    with z.open(zi) as f:
+                        head = f.read(8)
+                    if head[:4] in (DEX_MAGIC, ZIP_MAGIC) or _xor1(head + b"\0" * 8, DEX_MAGIC) is not None \
+                            or _xor1(head + b"\0" * 8, ZIP_MAGIC) is not None:
+                        files[n] = z.read(zi)
+        except Exception as e:
+            logger.debug(f"quét payload: {e}")
+        for name, how, data in find_payloads(files):
+            try:
+                df = _dex.DEX(data, using_api=a.get_target_sdk_version())
+            except Exception as e:
+                logger.debug(f"payload {name}: {e}")
+                continue
+            cls = [c.get_name() for c in df.get_classes() if c.get_name() not in main]
+            if not cls:
+                continue
+            dx.add(df)
+            for c in cls:
+                self.payload_of.setdefault(c, name)
+            self.payloads.append({"name": name, "how": how, "size": len(data), "classes": cls})
+        dx.create_xref()
+        return a, dx
 
     # ------------------------------------------------------------------ index
     def is_lib(self, cls: str) -> bool:
@@ -454,12 +556,17 @@ class DexEngine:
             decl = re.compile(rf"^\s*(?:[\w<>\[\],.?$@]+\s+)+{re.escape(name)}\s*\([^;]*$")
         cands = [i for i, l in enumerate(masked) if decl.match(l)]
         first = None
+        if needle and re.fullmatch(r"[\w$]+\(", needle):     # lời gọi: khớp nguyên tên (Log.i( không khớp getApi()
+            _rx = re.compile(r"(?<![\w$])" + re.escape(needle))
+            hit = lambda l: _rx.search(l) is not None
+        else:
+            hit = lambda l: bool(needle) and needle in l
         for i in cands:
             depth, opened, j = 0, False, i
             while j < len(masked):
                 depth += masked[j].count("{") - masked[j].count("}")
                 opened = opened or "{" in masked[j]
-                if needle and j > i and needle in lines[j]:
+                if j > i and hit(lines[j]):
                     return i + 1, j + 1
                 if opened and depth <= 0:
                     break
@@ -467,7 +574,7 @@ class DexEngine:
             first = first or (i + 1, i + 1)
         if not first and needle:
             for j, l in enumerate(lines):
-                if needle in l:
+                if hit(l):
                     return j + 1, j + 1
         return first
 
@@ -502,6 +609,9 @@ class DexEngine:
                 h.snippet = [l[:300] for l in lines[s - 1:e]]
                 h.lang = "java"
         h.hook = frida_hook(klass, ma.name)
+        if ma.class_name in self.payload_of:
+            p = self.payload_of[ma.class_name]
+            h.note = f"📦 Code nằm trong payload ẩn {p} (nạp động lúc chạy)" + (f"\n{h.note}" if h.note else "")
         if with_path:
             h.path = self.path_to(ma)
             h.reachable = h.path is not None if self.entry_classes else None
@@ -624,7 +734,122 @@ class DexEngine:
             return None
         return None
 
-    def run_flows(self, rules: list[Rule]):
+    def intent_actions(self) -> dict[str, set[str]]:
+        """action trong <intent-filter> -> {class component} (để biết Intent ngầm đi tới đâu trong app)."""
+        out: dict[str, set[str]] = {}
+        if not self.apk:
+            return out
+        ns = "{http://schemas.android.com/apk/res/android}"
+        pkg = self.apk.get_package()
+        try:
+            root = self.apk.get_android_manifest_xml()
+        except Exception:
+            return out
+        for el in root.iter():
+            if el.tag not in ("activity", "activity-alias", "service", "receiver"):
+                continue
+            n = el.get(ns + "targetActivity") or el.get(ns + "name")
+            if not n:
+                continue
+            n = pkg + n if n.startswith(".") else (n if "." in n else f"{pkg}.{n}")
+            cls = "L" + n.replace(".", "/") + ";"
+            if cls not in self.entry_classes:
+                continue
+            for a in el.iter("action"):
+                if a.get(ns + "name"):
+                    out.setdefault(a.get(ns + "name"), set()).add(cls)
+        return out
+
+    def exported_components(self) -> set[str] | None:
+        """Component app khác gọi trực tiếp được: exported="true", hoặc có intent-filter mà không ghi exported
+        (mặc định trước Android 12). Provider mặc định không exported (targetSdk >= 17)."""
+        if not self.apk:
+            return None
+        ns = "{http://schemas.android.com/apk/res/android}"
+        pkg = self.apk.get_package()
+        try:
+            root = self.apk.get_android_manifest_xml()
+        except Exception:
+            return None
+        out = set()
+        for el in root.iter():
+            if el.tag not in ("activity", "activity-alias", "service", "receiver", "provider"):
+                continue
+            n = el.get(ns + "targetActivity") or el.get(ns + "name")
+            if not n:
+                continue
+            n = pkg + n if n.startswith(".") else (n if "." in n else f"{pkg}.{n}")
+            ex = el.get(ns + "exported")
+            if ex == "true" or (ex is None and el.tag != "provider" and el.find("intent-filter") is not None):
+                out.add("L" + n.replace(".", "/") + ";")
+        return out
+
+    def native_impl(self, ma, natives: list) -> tuple | None:
+        """Hàm native hiện thực method Java ma: export Java_* (kể cả bản overload __sig) hoặc RegisterNatives
+        (giả lập JNI_OnLoad; chỉ dùng khi lib có JNI_OnLoad). -> (lib, địa chỉ, tên) | None."""
+        desc = ma.descriptor.replace(" ", "")          # androguard: "(La; Lb;)V"
+        sym = f"Java_{jni_mangle(ma.class_name[1:-1])}_{jni_mangle(ma.name)}"
+        long_ = sym + "__" + jni_mangle(desc[1:desc.index(")")])
+        for lib in natives:
+            if not getattr(lib, "ok", False):
+                continue
+            for n in (long_, sym):
+                if n in lib.exports:
+                    return lib, lib.exports[n], n
+        for lib in natives:
+            if getattr(lib, "ok", False) and "JNI_OnLoad" in lib.exports and lib.emu:
+                for n_, sg, fn in lib.emu.natives:
+                    if n_ == ma.name and (not sg or sg == desc):
+                        return lib, fn, lib.fname(fn)
+        return None
+
+    @staticmethod
+    def native_hook(nat: dict) -> str:
+        if nat["fn"].startswith("Java_") or nat.get("exported"):
+            at = f"Process.getModuleByName('{nat['lib']}').getExportByName('{nat['fn']}')"
+        else:                                    # hàm static (RegisterNatives) không có symbol: base + offset
+            at = f"Process.getModuleByName('{nat['lib']}').base.add({nat['addr']:#x})"
+        return f"Interceptor.attach({at}, {{ onEnter(a) {{ console.log('{nat['fn']}', a[2], a[3]); }} }});"
+
+    def jni_summaries(self, natives: list) -> dict:
+        """sig method native -> {lib, fn, jsigs (API Java native gọi qua JNI), targets (method app được gọi
+        ngược), csinks (hàm libc nguy hiểm gọi tới được, dạng chữ ký giả Lnative/libc;->x()V)}."""
+        out = {}
+        if not natives:
+            return out
+        cha = self.cha
+        by_nd: dict = defaultdict(list)
+        for c, ms in cha.meth.items():
+            for k in ms:
+                by_nd[k].append(c)
+        for ma in self.native_methods:
+            impl = self.native_impl(ma, natives)
+            if impl is None:
+                continue
+            lib, a, fn = impl
+            js = lib.jni_summary(a)
+            jsigs, targets = [], []
+            for cl, n, sg in js["jcalls"]:
+                # class lấy từ FindClass gần nhất có thể sai (GetObjectClass không để lại chuỗi): nếu app có method
+                # trùng tên + chữ ký thì coi đó cũng là đích
+                app = by_nd.get(n + sg, [])[:4]
+                cands = ([f"L{cl};"] if cl else []) + [c for c in app if c != f"L{cl};"]
+                for c in cands:
+                    jsig = f"{c}->{n}{sg}"
+                    if jsig not in jsigs:
+                        jsigs.append(jsig)
+                    if c in cha.internal:
+                        for t in cha.resolve(0x6E, jsig) or cha.resolve(0x71, jsig):
+                            if t not in targets and t is not ma:
+                                targets.append(t)
+            csinks = [f"Lnative/libc;->{i}()V" for i in js["imports"] if i in NATIVE_SINK_IMPS]
+            if jsigs or csinks:
+                out[f"{ma.class_name}->{ma.name}{ma.descriptor}"] = {
+                    "lib": lib.name, "fn": fn, "addr": a, "exported": fn in lib.exports, "jname": ma.name, "jsigs": jsigs, "targets": targets,
+                    "csinks": csinks}
+        return out
+
+    def run_flows(self, rules: list[Rule], natives: list | None = None):
         """Chạy engine taint một lần cho mọi rule flow: (nguồn ∪, đích ∪)."""
         from .flow.engine import FlowEngine, Spec
         src, sinks, seen = [], [], set()
@@ -644,10 +869,17 @@ class DexEngine:
                             r"(?:forName|loadClass|getMethod|getDeclaredMethod|getField|getDeclaredField)|"
                             r"^Ljava/lang/reflect/Method;->invoke|^Ldalvik/system/\w+ClassLoader;-><init>")
         fe = FlowEngine(self.dx, self.cha, Spec(src, sinks), self.is_lib, self.flow_libs,
-                        decrypted=self.decrypted, res_string=self.res_string, max_rounds=8, inv=self.inv,
+                        decrypted=self.decrypted, res_string=self.res_string, max_rounds=self.flow_rounds, inv=self.inv,
                         interesting=lambda sg: sg in dec_sigs or bool(crypto.search(sg)), budget=self.flow_budget,
                         fields=(self.fld_r, self.fld_w))
         fe.label_str = crypto_label
+        fe.components = set(self.entry_classes)
+        fe.actions = self.intent_actions()
+        fe.exported = self.exported_components()
+        fe.package = self.apk.get_package() if self.apk else None
+        if natives is not None:
+            self.natives = natives
+        fe.natives = self.jni_summaries(getattr(self, "natives", None) or [])
         self.flow = fe.run()
         return self.flow
 
@@ -665,20 +897,55 @@ class DexEngine:
                 s = fe.sources[f.src]
                 if s.kind == "param":
                     return f"tham số của callback {pretty_sig(s.sig).split('(')[0]}"
-                return pretty_sig(s.sig).split("(")[0] + (f" @ {self.short(s.ma)}+{s.off:#x}" if s.off >= 0 else "")
+                d = pretty_sig(s.sig).split("(")[0] + (f" @ {self.short(s.ma)}+{s.off:#x}" if s.off >= 0 else "")
+                if (nat := fe.native_sites.get((s.ma, s.off))) and s.sig in nat["jsigs"]:
+                    d += f" (gọi trong mã native {nat['lib']}!{nat['fn']} qua JNI)"
+                return d
             # nguồn cụ thể nhất trước (getStringExtra hơn getIntent)
             fl.sort(key=lambda f: ("getIntent()" in fe.sources[f.src].sig, len(f.chain)))
             f0 = fl[0]
             s0 = fe.sources[f0.src]
-            chain = " → ".join(self.short(m) for m in f0.chain)
-            path = chain if f0.chain[0] is s0.ma else f"{self.short(s0.ma)} ⇢(field/heap) → {chain}"
+            jni_via = {}                         # (a, b): a gọi method native, mã native gọi ngược b
+            for (nm, _), nat in fe.native_sites.items():
+                for t in nat["targets"]:
+                    jni_via[(nm, t)] = f"{nat['lib']}!{nat['fn']}"
+            chain = self.short(f0.chain[0])
+            for a_, b_ in zip(f0.chain, f0.chain[1:]):
+                chain += (f" ⇢(JNI: {jni_via[(a_, b_)]} gọi ngược) → " if (a_, b_) in jni_via else " → ") + self.short(b_)
+            if f0.chain[0] is s0.ma:
+                path = chain
+            else:
+                via = "field/heap"
+                sink_comp = fe._comp_of(f0.chain[0].class_name)
+                for (lm, lo), tg in fe.icc_links.items():
+                    if tg & sink_comp:
+                        via = f"Intent: {self.short(lm)}+{lo:#x} → {cls_dot(sorted(tg & sink_comp)[0]).split('.')[-1]}"
+                    elif "*" in tg and sink_comp and via == "field/heap":
+                        via = f"Intent không rõ đích: {self.short(lm)}+{lo:#x} → ?"
+                    else:
+                        continue
+                    if lm is s0.ma:
+                        break
+                nat = fe.native_sites.get((s0.ma, s0.off))
+                if via == "field/heap" and nat and f0.chain[0] in nat["targets"]:
+                    via = f"JNI: {nat['lib']}!{nat['fn']} gọi ngược {self.short(f0.chain[0])}"
+                if via == "field/heap" and f0.chain[0].name == "onActivityResult":
+                    via = "setResult → onActivityResult"
+                path = f"{self.short(s0.ma)} ⇢({via}) → {chain}"
             srcs = list(dict.fromkeys(sdesc(f) for f in fl))
             note = ("Nguồn: " + srcs[0] + (f"  (+{len(srcs) - 1} nguồn khác trên cùng đường: " + "; ".join(srcs[1:4]) + ")"
                                            if len(srcs) > 1 else "") + "\n"
                     f"Đường dữ liệu: {path}\n"
                     f"Đích: {pretty_sig(f0.sink_sig)} trong {self.short(sm)}")
             match = f"{pretty_sig(s0.sig).split('(')[0].split('.')[-1]}() ⟶ {pretty_sig(f0.sink_sig).split('(')[0]}"
-            h = self.make_hit(sm, so, match, needle_of("api", f0.sink_sig), ctx, confidence="behavior", note=note)
+            needle = needle_of("api", f0.sink_sig)
+            if (nat := fe.native_sites.get((sm, so))) and (f0.sink_sig in nat["jsigs"] or f0.sink_sig in nat["csinks"]):
+                how = "qua JNI" if f0.sink_sig in nat["jsigs"] else "hàm libc"
+                note += (f"\nĐích nằm trong mã native: {nat['lib']}!{nat['fn']} gọi {pretty_sig(f0.sink_sig).split('(')[0]}"
+                         f" ({how}). Bên trong native chỉ xấp xỉ: mọi đối số của method native coi như tới được đích."
+                         f"\nHook: {self.native_hook(nat)}")
+                needle = nat["jname"] + "("
+            h = self.make_hit(sm, so, match, needle, ctx, confidence="behavior", note=note)
             if reach is not None:
                 h.reachable = any(f.chain[0] in reach and fe.sources[f.src].ma in reach for f in fl)
             hits.append(h)
@@ -686,6 +953,30 @@ class DexEngine:
         return hits
 
     # ------------------------------------------------------------------ builtins
+    def builtin_payload_dex(self, ctx: int) -> list[Hit]:
+        """DEX ẩn trong APK: nơi chứa, cách tìm ra, số class, chỗ code chính nạp nó."""
+        hits = []
+        loaders = [(ma, off) for sg, occ in self.inv.items()
+                   if re.match(r"Ldalvik/system/\w*(?:DexClassLoader|DexFile|PathClassLoader);-><init>|Ldalvik/system/DexFile;->loadDex", sg)
+                   for ma, off in occ if ma.class_name not in self.payload_of]
+        for p in self.payloads:
+            base = p["name"].split("!")[0].rsplit("/", 1)[-1]
+            refs = [(ma, off) for s_, occ in self.strs.items() if base and base in s_ for ma, off in occ]
+            at = refs[0] if refs else (loaders[0] if loaders else None)
+            pk = sorted({c[1:].rsplit("/", 1)[0].replace("/", ".") for c in p["classes"]})
+            note = (f"Payload: {p['name']} ({p['size']} byte, {p['how']}), {len(p['classes'])} class"
+                    f" — gói: {', '.join(pk[:6])}{' …' if len(pk) > 6 else ''}\n"
+                    f"Đã nạp chung với code chính: các finding khác trong payload được đánh dấu 📦."
+                    + (f"\nCode chính nhắc tới file: {', '.join(sorted({self.short(m) for m, _ in refs})[:5])}" if refs else "")
+                    + (f"\nNạp bằng: {', '.join(sorted({self.short(m) for m, _ in loaders})[:5])}" if loaders else ""))
+            match = f"{p['name']} → {len(p['classes'])} class"
+            if at:
+                h = self.make_hit(at[0], at[1], match, base if refs else None, ctx, confidence="behavior", note=note)
+            else:
+                h = Hit(file=p["name"], line=0, match=match, confidence="code", engine="dex", note=note)
+            hits.append(h)
+        return hits
+
     def _flow_reflect(self, ma, off) -> str | None:
         fe = getattr(self, "flow", None)
         if fe is None:

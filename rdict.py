@@ -56,7 +56,7 @@ except ImportError as e:
 VERSION = "0.3.0"
 DEFAULT_RULES = ROOT / "rules"
 CACHE_DIR = Path(os.environ.get("RDICT_CACHE", Path.home() / ".cache" / "rdict"))
-DEX_BUILTINS = {"reflection", "string_decryptor", "insecure_tls", "jni_bridge", "crypto_autodecrypt"}
+DEX_BUILTINS = {"reflection", "string_decryptor", "insecure_tls", "jni_bridge", "crypto_autodecrypt", "payload_dex"}
 NATIVE_BUILTINS = {"native_init_array", "native_entropy", "native_stripped", "native_cmp_const",
                    "native_stack_strings", "native_init_decrypt", "native_register_natives"}
 
@@ -222,6 +222,8 @@ class Scanner:
             return self.dex.builtin_crypto_autodecrypt(ctx)
         if b == "insecure_tls":
             return self.dex.builtin_insecure_tls(ctx)
+        if b == "payload_dex":
+            return self.dex.builtin_payload_dex(ctx)
         if b == "jni_bridge":
             return self.jni_bridge()
         out = []
@@ -399,30 +401,6 @@ def main() -> None:
                 except Exception as e:
                     console.print(f"[yellow]! Không phân tích được bytecode: {e}[/]")
 
-    want_flow = dex is not None and not args.no_flow
-    flow_rules = rules if any(r.flow for r in rules) else []
-
-    def do_flow():
-        t1 = time.time()
-        with console.status("[cyan]Đang phân tích luồng giá trị (hằng số + taint)..."):
-            try:
-                dex.flow_libs, dex.flow_budget = args.flow_libs, args.flow_budget
-                fe = dex.run_flows(flow_rules)
-                if fe.truncated:
-                    console.print(f"[yellow]! Phân tích luồng dừng sau {args.flow_budget:.0f}s (--flow-budget): "
-                                  f"kết quả có thể thiếu[/]")
-                return f"flow({len(fe.irs)}/{fe.n_total} methods, {fe.rounds} vòng, {time.time() - t1:.0f}s)"
-            except Exception as e:
-                console.print(f"[yellow]! Phân tích luồng dữ liệu lỗi: {e}[/]")
-                return None
-
-    flow_desc = do_flow() if want_flow else None
-    decrypted_rows = handle_decrypt(args, dex, target) if dex else []
-    if want_flow and decrypted_rows:
-        flow_desc = do_flow()          # chạy lại: chuỗi đã giải mã giúp giải reflection / crypto
-    if flow_desc:
-        engines[0] += " + " + flow_desc
-
     natives = []
     if not args.no_native:
         if not NATIVE_OK:
@@ -444,6 +422,31 @@ def main() -> None:
     if args.no_emu:
         for lib in natives:
             lib._emu = None
+    want_flow = dex is not None and not args.no_flow
+    flow_rules = rules if any(r.flow for r in rules) else []
+
+    def do_flow():
+        t1 = time.time()
+        with console.status("[cyan]Đang phân tích luồng giá trị (hằng số + taint)..."):
+            try:
+                dex.flow_libs, dex.flow_budget = args.flow_libs, args.flow_budget
+                fe = dex.run_flows(flow_rules, natives)
+                if fe.truncated:
+                    console.print(f"[yellow]! Phân tích luồng dừng sau {args.flow_budget:.0f}s (--flow-budget): "
+                                  f"kết quả có thể thiếu[/]")
+                jni = f", JNI {len(fe.natives)} method native" if fe.natives else ""
+                return f"flow({len(fe.irs)}/{fe.n_total} methods, {fe.rounds} vòng{jni}, {time.time() - t1:.0f}s)"
+            except Exception as e:
+                console.print(f"[yellow]! Phân tích luồng dữ liệu lỗi: {e}[/]")
+                return None
+
+    flow_desc = do_flow() if want_flow else None
+    decrypted_rows = handle_decrypt(args, dex, target) if dex else []
+    if want_flow and decrypted_rows:
+        flow_desc = do_flow()          # chạy lại: chuỗi đã giải mã giúp giải reflection / crypto
+    if flow_desc:
+        engines[0] += " + " + flow_desc
+
     scanner = Scanner(files, filelist, dex, natives, args.all, args.context)
     findings: list[Finding] = []
     min_conf = CONFIDENCE.index(args.min_conf)

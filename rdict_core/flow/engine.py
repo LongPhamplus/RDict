@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
-from .ir import FILLED_NEW, INVOKE, MOVE_RESULT, MethodIR, lift, split_desc
+from .ir import FILLED_NEW, INVOKE, MOVE_RESULT, STATIC_LIKE, MethodIR, lift, split_desc
 
 TOP = ("⊤",)
 E = frozenset()
@@ -28,6 +28,7 @@ MAX_CONSTS = 8
 MAX_CHAIN = 8
 MAX_REFS = 16
 THROWN = ("thrown",)
+ESCAPE = ("escape",)        # taint của exception ném ra khỏi method (không có handler bao quanh)
 
 CLEAN = re.compile(r"^(?:length|size|isEmpty|equals\w*|hashCode|compareTo\w*|contains\w*|startsWith|endsWith|"
                    r"indexOf|lastIndexOf|getClass|matches|hasNext|isNull|has|containsKey|exists|isDirectory|canRead|"
@@ -39,6 +40,23 @@ STRB = ("Ljava/lang/StringBuilder;", "Ljava/lang/StringBuffer;")
 WRAPPER = re.compile(r"^L(?:java/io/|java/util/Formatter;|java/util/zip/|java/util/Scanner;|"
                      r"javax/crypto/Cipher(?:In|Out)putStream;|java/nio/channels/)")
 M32 = 0xFFFFFFFF
+# ICC: gửi Intent tới component khác / nhận Intent
+ICC_SEND = re.compile(r"->(?:startActivit\w*|startService|startForegroundService|bindService|sendBroadcast\w*|"
+                      r"sendOrderedBroadcast\w*|sendStickyBroadcast\w*|setResult)\(")
+ICC_RECV = {"onReceive", "onStartCommand", "onBind", "onRebind", "onUnbind", "onHandleIntent", "onNewIntent",
+            "onStart", "onHandleWork", "onActivityResult"}
+INTENT = "Landroid/content/Intent;"
+EXTRA_GET = re.compile(r"^get\w*Extra$")
+# container theo key: put("k", v) ... get("k") chỉ lấy đúng giá trị của key đó
+KEYED_CLS = re.compile(r"^L(?:java/util/\w*Map;|org/json/JSONObject;|android/content/ContentValues;|"
+                       r"android/os/(?:Base|Persistable)?Bundle;|android/content/Intent;)")
+# List theo thứ tự add: kích thước ("N", k) đi theo thanh ghi (nhạy đường đi; qua vòng lặp -> nhiều giá trị -> bỏ)
+LIST_CLS = re.compile(r"^Ljava/util/(?:\w*List|Collection|Vector|Stack);$")
+KEYED_PUT = re.compile(r"^(?:put|putExtra|put[A-Z]\w*|accumulate)$")
+KEYED_GET = re.compile(r"^(?:get|opt|get[A-Z]\w*|opt[A-Z]\w*|remove)$")
+# nguồn "dữ liệu do app khác gửi": chỉ tính khi component exported
+EXT_INTENT = re.compile(r"->getIntent\(\)|^Landroid/content/Intent;->get")
+MSG_SEND = re.compile(r"^L(?:android/os/Messenger;->send|android/os/Handler;->(?:sendMessage\w*|dispatchMessage))\(")
 
 
 TOPSET = frozenset((TOP,))
@@ -74,6 +92,25 @@ def single(c: frozenset):
     return None
 
 
+def rng(c: frozenset):
+    """Khoảng [lo, hi] chắc chắn chứa giá trị (hằng / tập hằng / ('R', lo, hi)); None nếu không biết."""
+    if not c:
+        return None
+    lo = hi = None
+    for x in c:
+        if isinstance(x, bool) or x is TOP or x is MAY or x == MAY:
+            return None
+        if isinstance(x, int):
+            a, b = x, x
+        elif isinstance(x, tuple) and len(x) == 3 and x[0] == "R":
+            a, b = x[1], x[2]
+        else:
+            return None
+        lo = a if lo is None else min(lo, a)
+        hi = b if hi is None else max(hi, b)
+    return lo, hi
+
+
 def s32(x: int) -> int:
     x &= M32
     return x - (1 << 32) if x & 0x80000000 else x
@@ -102,7 +139,7 @@ LIT8 = [0, "r", 2, 3, 4, 5, 6, 7, 8, 9, 10]   # 0xD8..0xE2
 
 
 class Summary:
-    __slots__ = ("p2ret", "ret_src", "ret_consts", "p2sink", "p2field", "p2p", "src2p", "crypto")
+    __slots__ = ("p2ret", "ret_src", "ret_consts", "p2sink", "p2field", "p2p", "src2p", "crypto", "p2thr", "thr_src")
 
     def __init__(self):
         self.crypto: set = set()     # (site_ma, off, objK, argK, objP, argP): doFinal phụ thuộc tham số
@@ -111,13 +148,14 @@ class Summary:
         self.p2field: dict[int, set] = defaultdict(set)
         self.p2p: set = set()
         self.src2p: dict[int, set] = defaultdict(set)
+        self.p2thr, self.thr_src = set(), set()     # exception thoát ra mang taint của tham số / nguồn
 
     def key(self):
         return (frozenset(self.p2ret), frozenset(self.ret_src), self.ret_consts,
                 frozenset((k, frozenset(v)) for k, v in self.p2sink.items()),
                 frozenset((k, frozenset(v)) for k, v in self.p2field.items()),
                 frozenset(self.p2p), frozenset((k, frozenset(v)) for k, v in self.src2p.items()),
-                frozenset(self.crypto))
+                frozenset(self.crypto), frozenset(self.p2thr), frozenset(self.thr_src))
 
 
 class SourceSite:
@@ -168,11 +206,14 @@ class Spec:
 
 
 class Ctx:
-    __slots__ = ("ma", "S", "heap", "ret", "fw_t", "fw_c", "this_cls")
+    __slots__ = ("ma", "S", "heap", "ret", "fw_t", "fw_c", "this_cls", "in_try", "hnd", "blk")
 
     def __init__(self, ma, S, heap, fw_t, fw_c, this_cls):
         self.ma, self.S, self.heap, self.fw_t, self.fw_c, self.this_cls = ma, S, heap, fw_t, fw_c, this_cls
         self.ret = None
+        self.in_try = False                     # block hiện tại có handler (try) bao quanh
+        self.hnd: tuple = ()                    # các block handler bắt exception của block hiện tại
+        self.blk = -1
 
 
 class FlowEngine:
@@ -206,6 +247,17 @@ class FlowEngine:
         self.n_total = 0
         self.crypto_sites: list = []                  # (ma, off, sig, nhãn object Cipher, nhãn đối số)
         self._csites: set = set()
+        self.components: set = set()                  # class component khai báo trong manifest
+        self.actions: dict = {}                       # action intent-filter -> {component}
+        self.icc_links: dict = {}                     # (ma, off) -> {component đích}
+        self.exported: set | None = None              # component app khác gọi được (None: không biết)
+        self._compc: dict = {}
+        self._icc_idx: dict = {}                      # kênh -> {key extra đã ghi}
+        self.res_map: dict = {}                       # component -> {component nó startActivityForResult tới}
+        self._icc_dirty = False
+        self.package: str | None = None               # package của app (setPackage(chính mình) = Intent nội bộ)
+        self.natives: dict = {}                       # sig method native Java -> tóm tắt JNI (xem DexEngine.jni_summaries)
+        self.native_sites: dict = {}                  # (ma, off) chỗ gọi method native -> tóm tắt đã áp
 
     # ------------------------------------------------------------------ driver
     def methods(self):
@@ -227,6 +279,14 @@ class FlowEngine:
                 seeds.update(m for m, _ in occ if m in mset)
         if self.spec.cb_src:
             seeds.update(m for m in ms if self.spec.cb_match(self.cha.overrides(m)))
+        for sig, nat in self.natives.items():      # JNI: chỗ gọi method native + method Java native gọi ngược
+            seeds.update(m for m, _ in self.inv.get(sig, ()) if m in mset)
+            seeds.update(t for t in nat["targets"] if t in mset)
+        if self.components:                        # ICC: nơi gửi Intent và nơi nhận
+            for sig, occ in self.inv.items():
+                if ICC_SEND.search(sig) or sig.endswith("->getIntent()Landroid/content/Intent;") or MSG_SEND.search(sig):
+                    seeds.update(m for m, _ in occ if m in mset)
+            seeds.update(m for m in ms if m.name in ICC_RECV or m.name == "handleMessage")
         rel = set(seeds)
         q = list(seeds)
         while q:                                   # caller: taint đi lên qua giá trị trả về / field
@@ -247,6 +307,32 @@ class FlowEngine:
         # <clinit> / constructor ghi field hằng (tên class cho reflection, key...)
         rel.update(m for m in ms if m.name in ("<clinit>",))
         rel = self._close(rel, mset)
+        while True:
+            n0 = len(rel)
+            # kho chung theo key (SharedPreferences / Bundle): lát có ghi -> thêm mọi method đọc kho đó (+ caller)
+            for c, pre, store in self.STORES:
+                if pre != "put":
+                    continue
+                wr = any(m in rel for sg, occ in self.inv.items() if sg.startswith(c + "->put") for m, _ in occ)
+                if not wr:
+                    continue
+                for c2, pre2, store2 in self.STORES:
+                    if store2 == store and pre2 == "get":
+                        for sg, occ in self.inv.items():
+                            if sg.startswith(c2 + "->get"):
+                                for m, _ in occ:
+                                    if m in mset and m not in rel:
+                                        rel.add(m)
+                                        q = [m]
+                                        while q:
+                                            x = q.pop()
+                                            for cc, _ in self.cha.preds(x):
+                                                if cc in mset and cc not in rel:
+                                                    rel.add(cc)
+                                                    q.append(cc)
+            if len(rel) == n0:
+                break
+            rel = self._close(rel, mset)
         return [m for m in ms if m in rel]
 
     def _close(self, rel: set, mset: set) -> set:
@@ -338,6 +424,9 @@ class FlowEngine:
                 if nc != self.f_consts.get(f, E):
                     self.f_consts[f] = nc
                     changed_f = True
+            if self._icc_dirty:                 # receiver động / startActivityForResult mới: chạy lại tất cả
+                self._icc_dirty = False
+                changed_f = True
             if not changed_m and not changed_f:
                 ext = self._extend_slice(order, all_ms)
                 if not ext:
@@ -396,11 +485,18 @@ class FlowEngine:
         heap: dict = defaultdict(frozenset)
         init = {}
         cb = self.spec.cb_match(self.cha.overrides(ma)) if self.spec.cb_src else None
+        if cb and self._private(ma.class_name):
+            cb = None                          # receiver/provider không exported: tham số không do app khác kiểm soát
         for i, (r, t) in enumerate(zip(ir.param_regs, ir.param_types)):
             taint = {("p", i)}
             if cb and (i > 0 or ir.is_static):
                 taint.add(self._src(ma, -1 - i, cb, "param"))
-            init[r] = (E, frozenset(taint), frozenset((("pa", i),)) if t[0] in "L[" else E)
+            al = frozenset((("pa", i),)) if t[0] in "L[" else E
+            if t == INTENT and ma.name in ICC_RECV and (i > 0 or ir.is_static) and self.components:
+                al = al | self._incoming(ma.class_name, ma.name == "onActivityResult", heap)
+            elif t == "Landroid/os/Message;" and ma.name == "handleMessage":
+                taint |= self.f_taint.get("@msg", E)
+            init[r] = (E, frozenset(taint), al)
         if not ir.blocks:
             return S
         C = Ctx(ma, S, heap, fw_t, fw_c, None if ir.is_static else ma.class_name)
@@ -415,6 +511,7 @@ class FlowEngine:
                 visits += 1
                 b = ir.blocks[bi]
                 st = dict(ins_state[bi])
+                C.in_try, C.hnd, C.blk = bool(b.handlers), tuple(b.handlers), bi
                 for ins in b.insns:
                     self._step(ins, st, C)
                 succs = self._prune(b, st, by_start) + b.handlers
@@ -447,7 +544,25 @@ class FlowEngine:
             elif x[0] == "p":
                 S.p2ret.add(x[1])
         S.ret_consts = rv[0]
+        for x in heap.get(ESCAPE, E):
+            if isinstance(x, int):
+                S.thr_src.add(x)
+            elif x[0] == "p":
+                S.p2thr.add(x[1])
         for a, t in heap.items():
+            fk = None
+            if isinstance(a, tuple) and len(a) == 3 and a[0] == "x" and a[1][0] == "f":
+                fk = f"{a[1][1]}#{a[2]}"
+            elif isinstance(a, tuple) and len(a) == 2 and a[0] == "k" and a[1][0] == "f":
+                fk = a[1][1] + "#*"
+            if fk is not None:
+                conc = frozenset(x for x in t if isinstance(x, int))
+                if conc:
+                    fw_t[fk] = fw_t[fk] | conc
+                for x in t:
+                    if not isinstance(x, int) and x[0] == "p":
+                        S.p2field[x[1]].add(fk)
+                continue
             if isinstance(a, tuple) and a[0] == "f":
                 conc = frozenset(x for x in t if isinstance(x, int))
                 if conc:
@@ -472,22 +587,48 @@ class FlowEngine:
             return b.succs
         ins = b.insns[-1]
         op = ins.op
+        if op in (0x2B, 0x2C) and ins.lit and ins.regs:
+            return FlowEngine._prune_switch(b, st, by_start, ins)
         if not (0x32 <= op <= 0x3D) or ins.lit is None:
             return b.succs
-        a = single(st.get(ins.regs[0], EMPTY)[0])
+        a = rng(st.get(ins.regs[0], EMPTY)[0])
         if op <= 0x37:
-            c = single(st.get(ins.regs[1], EMPTY)[0]) if len(ins.regs) > 1 else None
+            c = rng(st.get(ins.regs[1], EMPTY)[0]) if len(ins.regs) > 1 else None
         else:
-            c = 0
-        if not isinstance(a, int) or not isinstance(c, int) or isinstance(a, bool):
+            c = (0, 0)
+        if a is None or c is None:
             return b.succs
+        (al, ah), (cl, ch) = a, c
         k = (op - 0x32) % 6
-        taken = (a == c, a != c, a < c, a >= c, a > c, a <= c)[k]
+        # (luôn đúng, luôn sai) cho eq ne lt ge gt le
+        always = [(al == ah == cl == ch, ah < cl or al > ch),
+                  (ah < cl or al > ch, al == ah == cl == ch),
+                  (ah < cl, al >= ch), (al >= ch, ah < cl),
+                  (al > ch, ah <= cl), (ah <= cl, al > ch)][k]
+        if always[0]:
+            taken = True
+        elif always[1]:
+            taken = False
+        else:
+            return b.succs
         tgt = by_start.get(ins.lit)
         if tgt is None or tgt not in b.succs:
             return b.succs
         other = [s for s in b.succs if s != tgt]
         return [tgt] if taken else other
+
+    @staticmethod
+    def _prune_switch(b, st, by_start, ins) -> list[int]:
+        r = rng(st.get(ins.regs[0], EMPTY)[0])
+        if r is None:
+            return b.succs
+        lo, hi = r
+        cases = {by_start.get(t) for _, t in ins.lit}
+        hit = [by_start.get(t) for k, t in ins.lit if lo <= k <= hi]
+        keys = {k for k, _ in ins.lit}
+        fall = hi - lo > 4096 or any(v not in keys for v in range(lo, hi + 1))
+        out = [s for s in b.succs if s in hit or (fall and s not in cases)]
+        return out or b.succs
 
     def _eff(self, v, heap) -> frozenset:
         t = v[1]
@@ -495,8 +636,14 @@ class FlowEngine:
             h = heap.get(a)
             if h:
                 t = t | h
+            h = heap.get(("k", a))                 # nội dung ghi theo key/chỉ số
+            if h:
+                t = t | h
             if a[0] == "f":
                 ft = self.f_taint.get(a[1])
+                if ft:
+                    t = t | ft
+                ft = self.f_taint.get(a[1] + "#*")
                 if ft:
                     t = t | ft
         return t
@@ -530,15 +677,14 @@ class FlowEngine:
         elif op == 0x1C:
             st[r[0]] = (frozenset((("C", ins.ref),)), E, E)
         elif op == 0x27:                                    # throw
-            t = self._eff(g(r[0], EMPTY), heap)
-            if t and not t <= heap[THROWN]:
-                heap[THROWN] = heap[THROWN] | t
+            self._throw(self._eff(g(r[0], EMPTY), heap), C)
         elif op == 0x0D:                                    # move-exception
-            st[r[0]] = (E, heap.get(THROWN, E), E)
+            st[r[0]] = (E, heap.get((THROWN, C.blk), E), E)
         elif op in (0x20, 0x21) or 0x2D <= op <= 0x31:
             st[r[0]] = EMPTY
         elif op == 0x22:
-            st[r[0]] = (frozenset(("",)) if ins.ref in STRB else E, E, frozenset((("a", ins.off),)))
+            c = frozenset(("",)) if ins.ref in STRB else (frozenset((("O", ins.ref),)) if ins.ref in self.cha.internal else E)
+            st[r[0]] = (c, E, frozenset((("a", ins.off),)))
         elif op == 0x23:
             st[r[0]] = (E, E, frozenset((("a", ins.off),)))
         elif op in FILLED_NEW:
@@ -551,14 +697,20 @@ class FlowEngine:
                 st[ins.res] = (E, E, frozenset((a,)))
         elif 0x44 <= op <= 0x4A:
             av = g(r[1], EMPTY)
-            st[r[0]] = (E, self._eff(av, heap), av[2] if op == 0x46 else E)
+            k = single(g(r[2], EMPTY)[0]) if len(r) > 2 else None
+            t = self._keyed_get(av, k, heap) if isinstance(k, int) else None
+            st[r[0]] = (E, self._eff(av, heap) if t is None else t, av[2] if op == 0x46 and t is None else E)
         elif 0x4B <= op <= 0x51:
             t = self._eff(g(r[0], EMPTY), heap)
             av = g(r[1], EMPTY)
             if av[2]:
-                for a in av[2]:
-                    if not t <= heap[a]:
-                        heap[a] = heap[a] | t
+                k = single(g(r[2], EMPTY)[0]) if len(r) > 2 else None
+                if isinstance(k, int):
+                    self._keyed_put(av, k, t, heap)
+                else:
+                    for a in av[2]:
+                        if not t <= heap[a]:
+                            heap[a] = heap[a] | t
             elif t:
                 st[r[1]] = (av[0], av[1] | t, av[2])
         elif 0x52 <= op <= 0x58 or 0x60 <= op <= 0x66:
@@ -575,7 +727,22 @@ class FlowEngine:
             v = g(r[0], EMPTY)
             if op <= 0x5F and f.split("->", 1)[0] not in self.cha.internal:
                 self._taint_obj(self._eff(v, heap), g(r[1], EMPTY), r[1], st, heap)
-            t = self._eff(v, heap)
+            # object có nội dung ghi theo key/chỉ số: phần đó sang field ảo f#k / f#*, không lẫn vào f
+            keyed = [hk for hk in heap if isinstance(hk, tuple) and len(hk) == 3 and hk[0] == "x" and hk[1] in v[2]] \
+                if any(("k", a) in heap for a in v[2]) else []
+            if keyed:
+                t = v[1]
+                for a in v[2]:
+                    t = t | heap.get(a, E)
+                    if a[0] == "f":
+                        t = t | self.f_taint.get(a[1], E)
+                for hk in keyed:
+                    self._put(C, f"{f}#{hk[2]}", heap[hk])
+                for a in v[2]:
+                    if ("k", a) in heap:
+                        self._put(C, f + "#*", heap[("k", a)])
+            else:
+                t = self._eff(v, heap)
             conc = frozenset(x for x in t if isinstance(x, int))
             if conc:
                 C.fw_t[f] = C.fw_t[f] | conc
@@ -628,6 +795,12 @@ class FlowEngine:
                 res[2] |= args[i][2]
                 c = args[i][0] if c is None else jc(c, args[i][0])
         res[1] |= s.ret_src
+        thr = frozenset(s.thr_src)
+        for i in s.p2thr:
+            if i < len(args):
+                thr |= eff(args[i], heap)
+        if thr:                                  # exception của callee: bắt tại đây (try) hoặc thoát tiếp
+            self._throw(thr, C)
         if s.p2ret and s.ret_consts:
             c = jc(c, s.ret_consts) if c is not None else s.ret_consts
         elif not s.p2ret:
@@ -672,6 +845,16 @@ class FlowEngine:
         for k, srcs in s.src2p.items():
             if k < len(args):
                 self._taint_obj(frozenset(srcs), args[k], regs_k[k], st, heap)
+
+    @staticmethod
+    def _throw(t, C):
+        """Exception mang taint t: tới các handler của block hiện tại, không có thì thoát khỏi method."""
+        if not t:
+            return
+        heap = C.heap
+        for k in ([(THROWN, h) for h in C.hnd] if C.hnd else [ESCAPE]):
+            if not t <= heap.get(k, E):
+                heap[k] = heap.get(k, E) | t
 
     def _labs(self, v, heap):
         """(nhãn hằng crypto ("k"), chỉ số tham số ("p")) trong giá trị v."""
@@ -729,16 +912,102 @@ class FlowEngine:
         regs_k = [regs[x] if x < len(regs) else None for x in pos]
         eff, heap = self._eff, C.heap
 
-        if self.spec.is_sink(sig):
+        internal_only = False
+        keyed_res = None
+        keyed_put = False
+        if not static and len(args) > 1 and args[0][2] and params and params[0] in ("Ljava/lang/String;", "Ljava/lang/Object;") \
+                and KEYED_CLS.match(cls):
+            k = single(args[1][0])
+            if isinstance(k, str):
+                if KEYED_PUT.match(name) and len(args) > 2:
+                    t = E
+                    for a in args[2:]:
+                        t = t | eff(a, heap)
+                    self._keyed_put(args[0], k, t, heap)
+                    keyed_put = True
+                elif KEYED_GET.match(name) and not any(isinstance(a, tuple) and a[0] == "in" for a in args[0][2]):
+                    t = self._keyed_get(args[0], k, heap)
+                    if t is not None:
+                        for a in args[2:]:                 # getOrDefault / optString(k, mặc định)
+                            t = t | eff(a, heap)
+                        keyed_res = t
+        if not static and args and LIST_CLS.match(cls) and regs_k[0] is not None:
+            if name == "<init>" and len(args) == 1:
+                o = st.get(regs_k[0], EMPTY)
+                st[regs_k[0]] = (frozenset((("N", 0),)), o[1], o[2])
+            elif name == "add" and len(args) == 2 and args[0][2]:
+                n = single(args[0][0])
+                if isinstance(n, tuple) and n[0] == "N":
+                    self._keyed_put(args[0], n[1], eff(args[1], heap), heap)
+                    keyed_put = True
+                    o = st.get(regs_k[0], EMPTY)
+                    st[regs_k[0]] = (frozenset((("N", n[1] + 1),)), o[1], o[2])
+            elif name == "get" and params == ["I"] and len(args) == 2:
+                k = single(args[1][0])
+                if isinstance(k, int) and not isinstance(k, bool):
+                    t = self._keyed_get(args[0], k, heap)
+                    if t is not None:
+                        keyed_res = t
+            elif name not in ("size", "isEmpty", "contains", "indexOf", "iterator", "get", "toString"):
+                o = st.get(regs_k[0], EMPTY)        # remove / add(i, x) / addAll / set...: không còn biết thứ tự
+                if any(isinstance(x, tuple) and x[0] == "N" for x in o[0]):
+                    st[regs_k[0]] = (E, o[1], o[2])
+        if cls == INTENT and not static and self.components:
+            if EXTRA_GET.match(name) and len(args) > 1 and params and params[0] == "Ljava/lang/String;":
+                ins_ = [a for a in args[0][2] if isinstance(a, tuple) and a[0] == "in"]
+                k = single(args[1][0])
+                if ins_ and isinstance(k, str):
+                    t = args[0][1]
+                    for a in ins_:
+                        t = t | self._chan_key(a[1], k)
+                    for a in args[0][2]:
+                        if a not in ins_:
+                            t = t | heap.get(a, E)
+                    keyed_res = t
+        if name == "registerReceiver" and self.components:
+            self._register(params, args)
+        if self.components and ICC_SEND.search(sig):
+            internal_only = self._icc_send(name, params, args, static, C, ins.off)
+        elif MSG_SEND.search(sig) and len(args) > 1:
+            self._put(C, "@msg", eff(args[1], heap))
+        if self.spec.is_sink(sig) and not internal_only:
             self._sink(sig, args, static, C, ins.off)
+        nat_t = None
+        if self.natives:
+            nat = self.natives.get(sig)
+            if nat is None and not static and cls in self.cha.internal:
+                nat = next((self.natives[k] for t in self.cha.resolve(op, sig)
+                            if (k := f"{t.class_name}->{t.name}{t.descriptor}") in self.natives), None)
+            if nat is not None:
+                nat_t = self._native(nat, args, static, st, C, ins.off)
         if self.label_str is not None and cls == "Ljavax/crypto/Cipher;" and name == "doFinal" and len(args) > 1:
             (ok, op_), (ak, ap_) = self._labs(args[0], heap), self._labs(args[1], heap)
             self._crypto(C, C.ma, ins.off, ok, ak, op_, ap_)
 
         res = [None, E, E]
+        if keyed_res is not None:                # getXExtra("k") trên Intent nhận được: chỉ lấy extra "k"
+            res[1] = keyed_res
+            if rtype[0] in "L[":
+                res[2] = frozenset((("a", ins.off),))
+            res[0] = self._consts(sig, cls, name, static, params, args, regs, st, C, ins, E)
+            if self.spec.is_src(sig) and not (EXT_INTENT.search(sig) and self._private(C.ma.class_name)):
+                res[1] = res[1] | {self._src(C.ma, ins.off, sig, "api")}
+            if ins.res is not None:
+                st[ins.res] = (res[0], frozenset(res[1]), frozenset(res[2]))
+            return
         targets = self.cha.resolve(op, sig) if cls in self.cha.internal or not static else []
         if cls not in self.cha.internal and (cls == "Ljava/lang/Object;" or len(targets) > 8):
             targets = []
+        if not static and op not in STATIC_LIKE and args and args[0][0] \
+                and all(isinstance(x, tuple) and x[0] == "O" for x in args[0][0]):
+            # biết chính xác kiểu object (new B() / factory trả về new B()): chỉ gọi hiện thực của kiểu đó
+            exact = []
+            for x in args[0][0]:
+                for m in self.cha.resolve(0x70, f"{x[1]}->{rest}"):
+                    if m not in exact:
+                        exact.append(m)
+            if exact:
+                targets = exact
         targets = [t for t in targets if t in self.irs or t in self.summ]
         if targets:
             for t in targets:
@@ -755,7 +1024,7 @@ class FlowEngine:
                     if i == 0 and ctx_recv:
                         continue
                     res[1] |= eff(a, heap)
-                if not static and not ctx_recv and len(args) > 1 and MUTATOR.match(name):
+                if not static and not ctx_recv and len(args) > 1 and MUTATOR.match(name) and not keyed_put:
                     t = E
                     for a in args[1:]:
                         t |= eff(a, heap)
@@ -781,7 +1050,13 @@ class FlowEngine:
                             if not isinstance(x, int) and x[0] == "p":
                                 C.S.p2field[x[1]].add(key)
                     else:
-                        res[1] |= self.f_taint.get(key, E)
+                        store_, _, k_ = key.partition(":")
+                        if k_ == "*":                # key không rõ: mọi key của kho
+                            for fk, ft in self.f_taint.items():
+                                if fk.startswith(store_ + ":"):
+                                    res[1] |= ft
+                        else:                        # key rõ: cả phần ghi bằng key không rõ
+                            res[1] |= self.f_taint.get(key, E) | self.f_taint.get(store_ + ":*", E)
                 if cls == "Ljava/lang/System;" and name == "arraycopy" and len(args) >= 3:
                     self._taint_obj(eff(args[0], heap), args[2], regs_k[2], st, heap)
                 # mảng truyền vào API framework có thể bị ghi (getChars, read(buf)...)
@@ -799,10 +1074,43 @@ class FlowEngine:
                     res[2] |= args[0][2]
         res[0] = self._consts(sig, cls, name, static, params, args, regs, st, C, ins,
                               E if res[0] is None else res[0])
-        if self.spec.is_src(sig):
+        if nat_t:
+            res[1] = res[1] | nat_t
+        if name == "getIntent" and not static and not params and rtype == INTENT and self.components:
+            res[2] = res[2] | self._incoming(C.ma.class_name, False, heap)
+        if self.spec.is_src(sig) and not (EXT_INTENT.search(sig) and self._private(C.ma.class_name)):
             res[1] = res[1] | {self._src(C.ma, ins.off, sig, "api")}
         if ins.res is not None:
             st[ins.res] = (res[0], frozenset(res[1]), frozenset(res[2]))
+
+    def _native(self, nat, args, static, st, C: Ctx, off) -> frozenset:
+        """Gọi method native có tóm tắt JNI. Không theo được taint bên trong mã máy nên xấp xỉ bằng một "bể":
+        đối số + nguồn native tự đọc (GetMethodID getDeviceId...) + giá trị trả về của method Java nó gọi ngược.
+        Bể chảy vào đích native gọi tới (Java qua JNI hoặc libc: send/write/system...) và vào giá trị trả về."""
+        eff, heap = self._eff, C.heap
+        pool = E
+        for i, a in enumerate(args):
+            if i == 0 and not static:
+                continue
+            pool = pool | eff(a, heap)
+        for js in nat["jsigs"]:
+            if self.spec.is_src(js):
+                pool = pool | {self._src(C.ma, off, js, "api")}
+        for t in nat["targets"]:                 # native gọi ngược method Java của app
+            self._edge(C.ma, t)
+            if t in self.summ:
+                ps, _ = split_desc(t.descriptor)
+                v = (E, pool, E)
+                cargs = ([] if "static" in t.get_access_flags_string() else [EMPTY]) + [v] * len(ps)
+                r = [None, E, E]
+                self._apply(t, cargs, [None] * len(cargs), st, C, r)
+                pool = pool | r[1]
+        v = (E, pool, E)
+        for js in nat["jsigs"] + nat["csinks"]:
+            if self.spec.is_sink(js):
+                self._sink(js, [EMPTY, v], False, C, off)
+        self.native_sites[(C.ma, off)] = nat
+        return pool
 
     def _bridges(self, cls, name, args, regs_k, st, C, res, ins) -> bool:
         """Framework gọi ngược code của app: AsyncTask.execute -> doInBackground; Method.invoke (reflection)."""
@@ -822,6 +1130,7 @@ class FlowEngine:
                 return False
             arr = args[2] if len(args) > 2 else EMPTY
             elem = (E, eff(arr, heap), E)
+            applied = False
             for _, c, m in targets:
                 cands = []
                 if c and c in self.cha.internal:
@@ -832,6 +1141,7 @@ class FlowEngine:
                 elif c is None:
                     cands = self._methods_named(m)[:3]
                 for t in cands:
+                    applied = True
                     self._edge(C.ma, t)
                     st_ = bool(t.get_method().get_access_flags() & 0x8)
                     n = len(split_desc(t.descriptor)[0])
@@ -843,8 +1153,189 @@ class FlowEngine:
                         res[1] |= {self._src(C.ma, ins.off, pseudo + ")", "api")}
                     if any(p.search(pseudo) for p in self.spec.sinks):
                         self._sink(pseudo + ")", [args[1], elem], False, C, ins.off)
-            return True
+                    applied = True
+            return applied           # chưa giải được đích -> truyền taint như lời gọi thường
         return False
+
+    # ------------------------------------------------------------------ ICC
+    # Kênh: "@icc:<component>" (extra không rõ key) và "@icc:<component>#<key>"; component "*" = không rõ đích.
+    # Kết quả setResult: "@icc:result:<component trả kết quả>".
+    def _put(self, C, key, t):
+        conc = frozenset(x for x in t if isinstance(x, int))
+        if conc and not conc <= C.fw_t[key]:
+            C.fw_t[key] = C.fw_t[key] | conc
+        for x in t:
+            if not isinstance(x, int) and x[0] == "p":
+                C.S.p2field[x[1]].add(key)
+        if key.startswith("@icc:"):
+            ch, _, k = key.partition("#")
+            ks = self._icc_idx.setdefault(ch, set())
+            if k:
+                ks.add(k)
+
+    def _comp_of(self, cls) -> set:
+        """Component mà code trong class này thuộc về: chính nó, class bao ngoài (A$1), hoặc lớp con."""
+        r = self._compc.get(cls)
+        if r is None:
+            r = set()
+            c = cls
+            while True:
+                r |= ({c} | self.cha.subtypes(c)) & self.components
+                if r or "$" not in c:
+                    break
+                c = c[:c.rindex("$")] + ";"
+            self._compc[cls] = r
+        return r
+
+    def _private(self, cls) -> bool:
+        """Code thuộc component KHÔNG exported: app khác không gửi Intent trực tiếp tới được."""
+        if self.exported is None:
+            return False
+        comps = self._comp_of(cls)
+        return bool(comps) and not (comps & self.exported)
+
+    def _chans(self, cls, result: bool) -> tuple:
+        """Kênh Intent mà code trong class này có thể nhận."""
+        comps = self._comp_of(cls)
+        if not result:
+            return tuple(sorted("@icc:" + c for c in comps)) + (("@icc:*",) if comps else ())
+        started = set()
+        for a in comps:
+            started |= self.res_map.get(a, set())
+        if not comps or "*" in started:
+            return tuple(sorted(c for c in self._icc_idx if c.startswith("@icc:result:")))
+        return tuple(sorted("@icc:result:" + b for b in started))
+
+    def _chan_all(self, chans) -> frozenset:
+        t = E
+        for ch in chans:
+            t = t | self.f_taint.get(ch, E)
+            for k in self._icc_idx.get(ch, ()):
+                t = t | self.f_taint.get(ch + "#" + k, E)
+        return t
+
+    def _chan_key(self, chans, k) -> frozenset:
+        t = E
+        for ch in chans:
+            t = t | self.f_taint.get(ch, E) | self.f_taint.get(ch + "#" + k, E)
+        return t
+
+    def _incoming(self, cls, result: bool, heap):
+        """Intent nhận được: object giả ('in', kênh); nội dung toàn bộ = mọi extra (khi dùng cả object)."""
+        chans = self._chans(cls, result)
+        if not chans:
+            return E
+        a = ("in", chans)
+        heap[a] = heap[a] | self._chan_all(chans)
+        return frozenset((a,))
+
+    def _icc_targets(self, v):
+        """-> (component nội bộ nhận Intent, có thể ra ngoài app không)."""
+        tags = [x for x in v[0] if isinstance(x, tuple) and x[0] in ("T", "A")]
+        if not tags or TOP in v[0]:
+            return set(), True
+        selfpkg = ("P", "self") in v[0] and ("P", "other") not in v[0]
+        if any(k == "T" for k, _ in tags):       # có component cụ thể -> action không quyết định nơi nhận
+            tags = [t for t in tags if t[0] == "T"]
+        internal, out = set(), False
+        for k, x in tags:
+            if k == "T":
+                if x in self.components:
+                    internal.add(x)
+                elif x not in self.cha.internal:
+                    out = True                  # component của app khác
+                # class của app nhưng không khai báo trong manifest: Android không khởi chạy được
+            else:
+                internal |= self.actions.get(x, set())
+                out = out or not selfpkg        # Intent ngầm: app khác cũng nhận được (trừ khi setPackage(chính app))
+        return internal, out
+
+    def _send_chan(self, C, ch, v):
+        """Ghi Intent v vào kênh ch: extra có key riêng -> ch#key, phần còn lại -> ch."""
+        heap = C.heap
+        keyed, kt = {}, E
+        for a in v[2]:
+            for hk, ht in list(heap.items()):
+                if isinstance(hk, tuple) and len(hk) == 3 and hk[0] == "x" and hk[1] == a and ht:
+                    keyed[hk[2]] = keyed.get(hk[2], E) | ht
+                    kt = kt | ht
+        for k, t in keyed.items():
+            self._put(C, ch + "#" + k, t)
+        rest = self._eff(v, heap) - kt
+        if rest or not keyed:
+            self._put(C, ch, rest)
+
+    def _icc_send(self, name, params, args, static, C, off) -> bool:
+        off0 = 0 if static else 1
+        ii = next((i + off0 for i, pt in enumerate(params) if pt == INTENT), None)
+        if ii is None or ii >= len(args):
+            return False
+        v = args[ii]
+        if name == "setResult":
+            for b in (self._comp_of(C.ma.class_name) or {"?"}):
+                self._send_chan(C, "@icc:result:" + b, v)
+            return self._private(C.ma.class_name)   # không exported: chỉ app mình gọi được -> kết quả không ra ngoài
+        internal, out = self._icc_targets(v)
+        if not internal and out and not any(isinstance(x, tuple) and x[0] in ("T", "A") for x in v[0]):
+            internal = {"*"}                    # không rõ đích: có thể tới bất kỳ component nào của app
+        for c in internal:
+            self._send_chan(C, "@icc:" + c, v)
+        if internal:
+            self.icc_links.setdefault((C.ma, off), set()).update(internal)
+        if "ForResult" in name:
+            for a in self._comp_of(C.ma.class_name):
+                cur = self.res_map.setdefault(a, set())
+                new = internal | ({"*"} if out else set())
+                if not new <= cur:
+                    cur |= new
+                    self._icc_dirty = True
+        return not out
+
+    def _register(self, params, args):
+        """registerReceiver(receiver, IntentFilter[, flags]): receiver động = component nhận các action đó."""
+        if len(args) < 3:
+            return
+        rcv = {x[1] for x in args[1][0] if isinstance(x, tuple) and x[0] == "O"}
+        acts = {x[1] for x in args[2][0] if isinstance(x, tuple) and x[0] == "A"}
+        fl = single(args[3][0]) if len(params) >= 3 and params[2] == "I" and len(args) > 3 else None
+        private = isinstance(fl, int) and bool(fl & 4)          # Context.RECEIVER_NOT_EXPORTED
+        for r in rcv:
+            if r not in self.components:
+                self.components.add(r)
+                self._icc_dirty = True
+            if not private and self.exported is not None and r not in self.exported:
+                self.exported.add(r)
+                self._icc_dirty = True
+            for a in acts:
+                if r not in self.actions.setdefault(a, set()):
+                    self.actions[a].add(r)
+                    self._icc_dirty = True
+        if self._icc_dirty:
+            self._compc.clear()
+
+    def _intent_consts(self, cls, name, params, args, regs, st):
+        """Đích của Intent: ('T', class component) / ('A', action). IntentFilter: ('A', action)."""
+        tags = set()
+        for i, pt in enumerate(params):
+            if i + 1 >= len(args):
+                break
+            c = args[i + 1][0]
+            if pt == "Ljava/lang/Class;" or pt == "Landroid/content/ComponentName;" or pt == INTENT:
+                tags |= {("T", x[1]) for x in c if isinstance(x, tuple) and x[0] in ("C", "T")}
+                if pt == INTENT:
+                    tags |= {x for x in c if isinstance(x, tuple) and x[0] == "A"}
+            elif pt == "Ljava/lang/String;":
+                strs = [x for x in c if isinstance(x, str)]
+                if name == "setClassName" or cls == "Landroid/content/ComponentName;":
+                    if i == len(params) - 1:
+                        tags |= {("T", "L" + x.replace(".", "/") + ";") for x in strs}
+                elif i == 0 and name in ("<init>", "setAction", "addAction"):
+                    tags |= {("A", x) for x in strs}
+        o = st.get(regs[0], EMPTY) if regs else EMPTY
+        nc = frozenset(tags) if name == "<init>" else (o[0] - {TOP}) | frozenset(tags)
+        if regs:
+            st[regs[0]] = (nc, o[1], o[2])
+        return nc
 
     STORES = (("Landroid/content/SharedPreferences$Editor;", "put", "@prefs"),
               ("Landroid/content/SharedPreferences;", "get", "@prefs"),
@@ -859,6 +1350,30 @@ class FlowEngine:
                 return (f"{store}:{k if isinstance(k, str) else '*'}", pre == "put")
         return None
 
+    @staticmethod
+    def _keyed_put(v, k, t, heap):
+        if not t:
+            return
+        for a in v[2]:
+            for hk in (("x", a, k), ("k", a)):
+                if not t <= heap[hk]:
+                    heap[hk] = heap[hk] | t
+
+    def _keyed_get(self, v, k, heap):
+        """Giá trị của key k trong container v; None nếu không có thông tin theo key (dùng cách thường).
+        Nội dung ghi theo key nằm riêng (heap ('x', obj, k) / field ảo 'f#k'), không lẫn vào nội dung chung."""
+        if not v[2]:
+            return None
+        for a in v[2]:
+            if ("k", a) not in heap and not (a[0] == "f" and a[1] + "#*" in self.f_taint):
+                return None
+        t = v[1]
+        for a in v[2]:
+            t = t | heap.get(("x", a, k), E) | heap.get(a, E)
+            if a[0] == "f":
+                t = t | self.f_taint.get(f"{a[1]}#{k}", E) | self.f_taint.get(a[1], E)
+        return t
+
     def _edge(self, a, b):
         if (a, b) not in self.extra_edges:
             self.extra_edges.add((a, b))
@@ -867,8 +1382,9 @@ class FlowEngine:
     def _methods_named(self, n):
         if self._by_name is None:
             self._by_name = defaultdict(list)
-            for m in self.irs:
-                self._by_name[m.name].append(m)
+            for m in self.methods():
+                if m.get_method().get_code() is not None:
+                    self._by_name[m.name].append(m)
         return self._by_name.get(n, [])
 
     @staticmethod
@@ -884,6 +1400,29 @@ class FlowEngine:
 
     def _consts(self, sig, cls, name, static, params, args, regs, st, C, ins, cur):
         ma = C.ma
+        if name == "nextInt" and cls in ("Ljava/util/Random;", "Ljava/security/SecureRandom;",
+                                         "Ljava/util/concurrent/ThreadLocalRandom;") and not static:
+            n = [single(a[0]) for a in args[1:]]
+            if len(n) == 1 and isinstance(n[0], int) and n[0] > 0:
+                return frozenset((("R", 0, n[0] - 1),))
+            if len(n) == 2 and all(isinstance(x, int) for x in n) and n[1] > n[0]:
+                return frozenset((("R", n[0], n[1] - 1),))
+        if name in ("length", "size") and not params and not static:
+            return frozenset((("R", 0, 0x7FFFFFFF),))
+        if name == "getPackageName" and not params and self.package:
+            return frozenset((self.package,))
+        if cls == INTENT and name == "setPackage" and not static and len(args) > 1 and regs:
+            c = args[1][0]
+            tag = ("P", "self") if c and all(x == self.package for x in c) else ("P", "other")
+            o = st.get(regs[0], EMPTY)
+            nc = (o[0] - {TOP}) | {tag}
+            st[regs[0]] = (nc, o[1], o[2])
+            return nc
+        if not static and ((cls == INTENT and name in ("<init>", "setClass", "setClassName", "setComponent",
+                                                          "setAction"))
+                           or (cls == "Landroid/content/ComponentName;" and name == "<init>")
+                           or (cls == "Landroid/content/IntentFilter;" and name in ("<init>", "addAction"))):
+            return self._intent_consts(cls, name, params, args, regs, st)
         if cls in STRB:
             if name == "<init>":
                 c = args[1][0] if len(args) > 1 else frozenset(("",))
@@ -904,6 +1443,32 @@ class FlowEngine:
                 return c
             if name == "toString":
                 return args[0][0]
+            if name == "reverse" and not params:
+                c = args[0][0]
+                c = frozenset(x[::-1] for x in c if isinstance(x, str)) if c and TOP not in c else E
+                o = st.get(regs[0], EMPTY)
+                st[regs[0]] = (c, o[1], o[2])
+                return c
+        if cls == "Ljava/lang/String;" and not static and args and args[0][0] and TOP not in args[0][0] \
+                and len(args[0][0]) <= MAX_CONSTS and all(isinstance(x, str) for x in args[0][0]):
+            # gấp hằng các phép biến đổi chuỗi (giấu tên API cho reflection: "xxgetDeviceIdyy".substring(2, 13))
+            ss, ks = args[0][0], [single(a[0]) for a in args[1:]]
+            f = None
+            if name == "substring" and ks and all(isinstance(k, int) for k in ks):
+                f = lambda x: x[ks[0]:ks[1]] if len(ks) > 1 else x[ks[0]:]
+            elif name in ("toLowerCase", "toUpperCase"):
+                f = str.lower if name == "toLowerCase" else str.upper
+            elif name == "replace" and len(ks) == 2 and all(k is not None and not isinstance(k, tuple) for k in ks):
+                ch = params[0] == "C"
+                a_, b_ = ((chr(k & 0xFFFF) if ch else str(k)) for k in ks)
+                f = lambda x: x.replace(a_, b_)
+            elif name in ("replaceAll", "replaceFirst") and len(ks) == 2 and all(isinstance(k, str) for k in ks):
+                f = lambda x: re.sub(ks[0], ks[1], x, count=1 if name == "replaceFirst" else 0)
+            if f is not None:
+                try:
+                    return frozenset(f(x) for x in ss)
+                except (re.error, IndexError, TypeError):
+                    return E
         if cls == "Ljava/lang/String;":
             if name == "concat" and len(args) == 2:
                 a, b = args[0][0], args[1][0]
@@ -922,9 +1487,21 @@ class FlowEngine:
                 s = self.res_string(v)
                 if s is not None:
                     return frozenset((s,))
-        if cls == "Ljava/lang/Object;" and name == "getClass" and args and C.this_cls \
-                and ("pa", 0) in args[0][2]:
-            return frozenset((("C", C.this_cls),))
+        if name == "getClass" and not params and args:
+            objs = frozenset(("C", x[1]) for x in args[0][0] if isinstance(x, tuple) and x[0] == "O")
+            if objs:
+                return objs
+            if C.this_cls and ("pa", 0) in args[0][2]:
+                return frozenset((("C", C.this_cls),))
+        if cls == "Ljava/lang/Class;" and name == "newInstance" and args:
+            objs = frozenset(("O", x[1]) for x in args[0][0] if isinstance(x, tuple) and x[0] == "C")
+            if objs:
+                return objs
+        if cls == "Ljava/lang/Class;" and name in ("getName", "getCanonicalName") and args:
+            n = frozenset(x[1][1:-1].replace("/", ".") for x in args[0][0]
+                          if isinstance(x, tuple) and x[0] == "C" and x[1].startswith("L"))
+            if n:
+                return n
         if cls == "Ljava/lang/reflect/Method;" and name == "getName" and args:
             return frozenset(x[2] for x in args[0][0] if isinstance(x, tuple) and x[0] == "M" and x[2])
         if (name == "forName" and cls == "Ljava/lang/Class;") or name == "loadClass":
