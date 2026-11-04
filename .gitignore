@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+# app test: build lại bằng tests/apps/*/build.sh (regress.sh tự build khi thiếu)
+tests/apps/*/*.apk
+tests/apps/*/k.jks
+tests/apps/*/*.idsig
