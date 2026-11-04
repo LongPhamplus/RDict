@@ -89,6 +89,7 @@ class Hit:
     path: list[str] | None = None           # đường gọi từ entry point
     reachable: bool | None = None
     note: str | None = None
+    gates: list[dict] | None = None         # điều kiện if phải thỏa để chạy tới đây (gates.py)
 
     def key(self) -> tuple:
         return (self.file, self.klass, self.method, self.line, self.offset, self.match[:60])

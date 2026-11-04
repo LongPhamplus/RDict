@@ -222,6 +222,8 @@ class DexEngine:
         self.internal_classes: set[str] = set()
         self.n_methods = 0
         self._src_cache: dict[str, ScanFile | None] = {}
+        self._chains: dict = {}
+        self._gater = None
         self._inits: dict[str, list] = defaultdict(list)
         self.entry_classes = self._entries()
         self._build()
@@ -489,29 +491,136 @@ class DexEngine:
                 res += [(m, "new") for _, m, _ in init.get_xref_from() if not m.is_external()]
         return res
 
-    def path_to(self, ma, max_depth: int = 12) -> list[str] | None:
+    def _chain(self, ma, max_depth: int = 12):
+        """[(method, nhãn cạnh tới method kế tiếp)] từ entry point tới ma, hoặc None."""
         if not self.entry_classes:
             return None
+        if ma in self._chains:
+            return self._chains[ma]
         prev = {ma: None}
         q = deque([(ma, 0)])
+        res = None
         while q:
             n, d = q.popleft()
             if n.class_name in self.entry_classes:
-                path, cur, pending = [], n, ""
+                res, cur = [], n
                 while cur is not None:
-                    path.append(pending + self.short(cur))
                     nxt = prev[cur]
-                    # label 'new' = cur tạo object rồi framework gọi callback ở nxt
-                    pending = {"new": "⇢(callback) ", "reflect": "⇢(reflection) "}.get(nxt[1], "") if nxt else ""
+                    res.append((cur, nxt[1] if nxt else None))
                     cur = nxt[0] if nxt else None
-                return path
+                break
             if d >= max_depth:
                 continue
             for p, label in self._preds(n):
                 if p not in prev:
                     prev[p] = (n, label)
                     q.append((p, d + 1))
-        return None
+        self._chains[ma] = res
+        return res
+
+    def path_to(self, ma, max_depth: int = 12) -> list[str] | None:
+        ch = self._chain(ma, max_depth)
+        if ch is None:
+            return None
+        path, pending = [], ""
+        for cur, lab in ch:
+            path.append(pending + self.short(cur))
+            # label 'new' = cur tạo object rồi framework gọi callback ở method kế tiếp
+            pending = {"new": "⇢(callback) ", "reflect": "⇢(reflection) "}.get(lab, "") if lab else ""
+        return path
+
+    # ------------------------------------------------------------------ cổng chặn
+    @property
+    def gater(self):
+        if self._gater is None:
+            from .gates import GateAnalyzer
+            self._gater = GateAnalyzer(self.internal_classes, self._method_by_sig)
+        return self._gater
+
+    def _method_by_sig(self, sig: str):
+        if getattr(self, "_by_sig", None) is None:
+            self._by_sig = {f"{m.class_name}->{m.name}{m.descriptor.replace(' ', '')}": m
+                            for m in self.dx.get_methods() if not m.is_external()}
+        return self._by_sig.get(sig)
+
+    def _call_sites(self, caller, callee, label) -> list[int]:
+        m = self.gater.ir(caller)
+        if m is None:
+            return []
+        want = callee.name + callee.descriptor.replace(" ", "")
+        out = []
+        for b in m.blocks:
+            for ins in b.insns:
+                if label == "new":
+                    if ins.op == 0x22 and ins.ref == callee.class_name:
+                        out.append(ins.off)
+                elif ins.op in INVOKE_OPS and isinstance(ins.ref, str) and \
+                        ins.ref.replace(" ", "").split("->", 1)[-1] == want:
+                    out.append(ins.off)
+        return out
+
+    @staticmethod
+    def _merge_gates(h, gates):
+        from .gates import KIND_ORDER
+        cur = h.gates or []
+        seen = {(g["where"], g["cond"]) for g in cur}
+        for g in gates:
+            if (g.where, g.text) not in seen:
+                seen.add((g.where, g.text))
+                cur.append(g.as_dict())
+        cur.sort(key=lambda g: KIND_ORDER.index(g["kind"]))
+        h.gates = cur[:8] or None
+
+    def gates_along(self, chain: list, off, src=None) -> list:
+        """Cổng trên đường dữ liệu chain[0] → ... → chain[-1] (lệnh đích tại off); src = SourceSite.
+        Ở method chứa nguồn chỉ xét chỗ gọi nằm sau nguồn (tới được từ block của nguồn)."""
+        g = self.gater
+        out = list(self.gates_for(src.ma, src.off)) if src is not None else []
+        for i, a in enumerate(chain):
+            if self.is_lib(a.class_name) and not self.include_libs:
+                continue
+            if i + 1 < len(chain):
+                sites = self._call_sites(a, chain[i + 1], "")
+                if src is not None and a is src.ma and (ax := g.aux(a)) and src.off in ax[0]:
+                    sb = ax[0][src.off][0]
+                    after = [o for o in sites if o in ax[0] and ax[0][o][0] in ax[3][sb]]
+                    sites = after or sites
+                common = None
+                for o in sites[:6]:
+                    gs = {x.text: x for x in g.gates_at(a, o, self.short(a))}
+                    common = gs if common is None else {k: v for k, v in common.items() if k in gs}
+                out += list((common or {}).values())
+            elif off is not None:
+                out += g.gates_at(a, off, self.short(a))
+        return out
+
+    def gates_for(self, ma, off) -> list:
+        """Điều kiện phải đúng để chạy tới (ma, off): trong ma và tại các chỗ gọi dọc đường từ entry point."""
+        g = self.gater
+        out = []
+        ch = self._chain(ma) or [(ma, None)]
+        for i, (cur, lab) in enumerate(ch):
+            if self.is_lib(cur.class_name) and not self.include_libs:
+                continue
+            if i + 1 < len(ch):
+                if lab == "reflect":
+                    continue
+                sites = self._call_sites(cur, ch[i + 1][0], lab)
+                common = None
+                for o in sites[:6]:
+                    gs = {x.text: x for x in g.gates_at(cur, o, self.short(cur))}
+                    common = gs if common is None else {k: v for k, v in common.items() if k in gs}
+                out += list((common or {}).values())
+            elif off is not None:
+                out += g.gates_at(cur, off, self.short(cur))
+        seen, res = set(), []
+        for x in out:
+            if (x.where, x.text) not in seen:
+                seen.add((x.where, x.text))
+                res.append(x)
+        from .gates import KIND_ORDER
+        res.sort(key=lambda x: KIND_ORDER.index(x.kind))
+        return res[:8]
 
     def callers(self, ma, limit=5) -> list[str]:
         return [self.short(m) for _, m, _ in list(ma.get_xref_from())[:limit] if not m.is_external()]
@@ -615,6 +724,13 @@ class DexEngine:
         if with_path:
             h.path = self.path_to(ma)
             h.reachable = h.path is not None if self.entry_classes else None
+            try:
+                gs = self.gates_for(ma, off)
+            except Exception as e:
+                logger.debug(f"gates {ma}: {e}")
+                gs = []
+            if gs:
+                h.gates = [x.as_dict() for x in gs]
         return h
 
     # ------------------------------------------------------------------ matching
@@ -946,6 +1062,11 @@ class DexEngine:
                          f"\nHook: {self.native_hook(nat)}")
                 needle = nat["jname"] + "("
             h = self.make_hit(sm, so, match, needle, ctx, confidence="behavior", note=note)
+            try:      # cổng dọc đường dữ liệu (không phải đường từ entry point tới sink)
+                h.gates = None
+                self._merge_gates(h, self.gates_along(f0.chain, so, s0 if s0.off >= 0 else None))
+            except Exception as e:
+                logger.debug(f"gates flow {sm}: {e}")
             if reach is not None:
                 h.reachable = any(f.chain[0] in reach and fe.sources[f.src].ma in reach for f in fl)
             hits.append(h)
@@ -974,6 +1095,91 @@ class DexEngine:
                 h = self.make_hit(at[0], at[1], match, base if refs else None, ctx, confidence="behavior", note=note)
             else:
                 h = Hit(file=p["name"], line=0, match=match, confidence="code", engine="dex", note=note)
+            hits.append(h)
+        return hits
+
+    # ------------------------------------------------------------------ logic bomb / cổng mở khóa
+    def _gate_scan(self):
+        """Quét mọi if trong code app có so sánh thời gian / chuỗi hằng / quốc gia -> {kind: [(ma, off, Cond, info)]}."""
+        if getattr(self, "_gscan", None) is not None:
+            return self._gscan
+        from .gates import TIME_RX, GEO_RX, EQ_RX, INPUT_RX, INSTALL_RX, date_of, dur_of
+        g = self.gater
+        cand = set()
+        for idx in (self.inv, self.flds):
+            for k, occ in idx.items():
+                if TIME_RX.search(k) or GEO_RX.search(k) or EQ_RX.search(k):
+                    cand.update(ma for ma, _ in occ)
+        out = {"time": [], "secret": [], "geo": []}
+        for ma in sorted(cand, key=lambda m: (m.class_name, m.name)):
+            if self.is_lib(ma.class_name) and not self.include_libs:
+                continue
+            for off, c in g.ifs(ma):
+                sigs = c.sigs
+                e = c.a
+                # 1) time bomb: thời điểm tuyệt đối, hoặc trì hoãn tính từ lúc cài
+                if any(TIME_RX.search(x) for x in sigs) and c.b is not None and c.rel not in ("is", "not"):
+                    a, b = (c.a, c.b) if c.b.kind == "const" else (c.b, c.a)
+                    if b.kind == "const" and isinstance(b.val, int):
+                        d = date_of(b.val)
+                        if d and not (a.kind == "const"):
+                            out["time"].append((ma, off, c, f"so sánh thời gian với {b.val} = {d}"))
+                            continue
+                        if any(INSTALL_RX.search(x) for x in a.sigs) and dur_of(b.val):
+                            out["time"].append((ma, off, c, f"chờ {dur_of(b.val)} sau khi cài ({b.val} ms)"))
+                            continue
+                    if a.kind == "call" and a.val[0].startswith("Ljava/util/Calendar;->get(") and b.kind == "const" \
+                            and isinstance(b.val, int) and 2015 <= b.val <= 2040:
+                        out["time"].append((ma, off, c, f"so sánh năm với {b.val}"))
+                        continue
+                # 2) so khớp chuỗi hằng
+                if e.kind == "call" and EQ_RX.search(e.val[0]):
+                    sig, recv, args = e.val
+                    parts = [x for x in [recv] + args if x]
+                    consts = [x.val for x in parts if x.kind == "str" and x.val]
+                    other = [x for x in parts if x.kind != "str"]
+                    if not consts or not other:
+                        continue
+                    osigs = frozenset().union(*(x.sigs for x in other))
+                    if any(GEO_RX.search(x) for x in osigs):
+                        out["geo"].append((ma, off, c, f"so khớp quốc gia/ngôn ngữ với {consts[0]!r}"))
+                    elif any(INPUT_RX.search(x) for x in osigs):
+                        src = next(x for x in osigs if INPUT_RX.search(x))
+                        hashed = "MessageDigest" in " ".join(osigs) or re.fullmatch(r"[0-9a-fA-F]{32,128}", consts[0])
+                        out["secret"].append((ma, off, c, f"{'hash của ' if hashed else ''}dữ liệu từ "
+                                                          f"{pretty_sig(src).split('(')[0]} so với {consts[0]!r}"))
+                elif any(GEO_RX.search(x) for x in sigs) and (c.b is None or c.b.kind != "const" or c.b.val is not None):
+                    if any(re.search(r"contains|indexOf|equals", x) for x in sigs):
+                        out["geo"].append((ma, off, c, "so khớp quốc gia/ngôn ngữ"))
+        self._gscan = out
+        return out
+
+    def builtin_gate(self, kind: str, ctx: int) -> list[Hit]:
+        from .gates import Gate
+        g = self.gater
+        hits = []
+        for ma, off, c, info in self._gate_scan()[kind]:
+            e = c.a
+            cc = c.neg() if c.rel == "not" else c          # chiều "khớp" (equals đúng)
+            force = None
+            if kind == "time":
+                for cand in (c, c.neg()):                    # chiều mở khóa = thời điểm đã tới
+                    f = g.force_of(cand, "time")
+                    if f and f[0] == "shift" or f and f[1] in (">", ">="):
+                        force, cc = f, cand
+                        break
+            elif kind == "secret":
+                force = g.force_of(cc, "secret")
+            if kind in ("secret", "geo") and e.kind == "call":
+                consts = [x.val for x in [e.val[1]] + e.val[2] if x and x.kind == "str" and x.val]
+                needle = '"' + consts[0][:16] if consts else None
+            else:
+                b = c.b if c.b is not None and c.b.kind == "const" else c.a
+                needle = str(b.val) if isinstance(b.val, int) else "currentTimeMillis("
+            h = self.make_hit(ma, off, cc.text[:160], needle, ctx, note=info)
+            if force:
+                h.gates = [Gate(self.short(ma), off, cc.text[:200], kind, force).as_dict()] + \
+                          [x for x in (h.gates or []) if x["off"] != off or x["where"] != self.short(ma)]
             hits.append(h)
         return hits
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 
+from .gates import KIND_ICON
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -88,6 +90,9 @@ def print_report(info: dict, findings: list[Finding], target: str, show_hook: bo
                 console.print(Text(f"     ↳ đường gọi: {arrow}", style="green"))
             elif h.reachable is False:
                 console.print(Text("     ↳ không tìm thấy đường từ entry point (dead code? gọi qua reflection/native?)", style="dim red"))
+            for g in h.gates or []:
+                console.print(Text(f"     🔒 cần {KIND_ICON.get(g['kind'], '')} {g['cond']}   [{g['where']}]",
+                                   style="yellow"))
             if h.note:
                 for nl in h.note.split("\n"):
                     console.print(Text(f"     ℹ {nl}", style="cyan"))
@@ -163,6 +168,8 @@ def write_markdown(path: Path, data: dict) -> None:
             L += [where, "", f"- match: `{h['match']}`"]
             if h.get("path"):
                 L.append(f"- đường gọi: `{' → '.join(h['path'])}`")
+            for g in h.get("gates") or []:
+                L.append(f"- 🔒 cần {KIND_ICON.get(g['kind'], '')} `{g['cond']}` ({g['where']})")
             if h.get("note"):
                 L += [f"- {n}" for n in h["note"].split("\n")]
             L.append("")
