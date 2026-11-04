@@ -82,6 +82,12 @@ def lift(ma) -> MethodIR | None:
                         ref = o[2]
             except Exception:
                 pass
+            if op in (0x2B, 0x2C):                    # switch: lit = ((giá trị case, offset đích tuyệt đối), ...)
+                try:
+                    pl = code.get_bc().get_ins_off(off + ins.get_ref_off() * 2)
+                    lit = tuple((k, off + t * 2) for k, t in zip(pl.get_keys(), pl.get_targets()))
+                except Exception:
+                    lit = None
             if op in MOVE_RESULT and last is not None and (last.op in INVOKE or last.op in FILLED_NEW):
                 last.res = regs[0] if regs else None
             it = Insn(off, op, regs, ref, lit)

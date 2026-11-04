@@ -38,6 +38,21 @@ rules:
     any:
       - '^(?:assets|res)/.*\.(?:dex|jar|apk|zip|bin|dat)$'
 
+  - id: OB-PAYLOAD-DEX
+    name: Payload DEX ẩn trong APK (đã giải nén và phân tích chung)
+    category: Obfuscation
+    severity: high
+    mitre: [T1407]
+    target: [code]
+    description: >
+      Trong APK có DEX nằm ngoài classes*.dex (assets/res/raw, file đổi đuôi, jar/apk lồng nhau, hoặc bị XOR
+      1 byte). Đây thường là payload của dropper hoặc code thật của packer. rdict nạp payload chung với code
+      chính, nên luồng dữ liệu, reflection và rule khác đều chạy được trên nó.
+    hint: >
+      Finding nằm trong payload có dấu 📦. Payload mã hóa mạnh hơn XOR 1 byte thì không giải tĩnh được:
+      hook DexClassLoader/InMemoryDexClassLoader để dump file lúc chạy.
+    builtin: payload_dex
+
   - id: OB-DYNLOAD
     name: Nạp code động (DexClassLoader)
     category: Obfuscation
