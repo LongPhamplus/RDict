@@ -1,0 +1,181 @@
+# Packing, obfuscation, nạp code động, framework đặc biệt
+rules:
+  - id: OB-PACKER
+    name: Packer / Protector thương mại
+    category: Obfuscation
+    severity: high
+    mitre: [T1406.002]
+    target: [filelist]
+    description: >
+      Phát hiện thư viện của các packer phổ biến: 360 Jiagu, Bangcle, SecNeo,
+      Tencent Legu, Ali, Baidu, iJiami, DexProtector, AppSealing...
+    hint: >
+      Code thật bị mã hóa và chỉ được giải mã lúc runtime. Hãy dump DEX từ memory
+      bằng frida-dexdump, BlackDex hoặc GDA. Phân tích tĩnh trên APK gốc gần như vô ích.
+    any:
+      - 'libjiagu\w*\.so'
+      - 'libsecexe\.so|libsecmain\.so|libSecShell\.so'
+      - 'libDexHelper\w*\.so'
+      - 'libshell[a-z]?\w*\.so|libtup\.so|libexec\.so|libexecmain\.so'
+      - 'libmobisec\w*\.so|libsgmain\w*\.so'
+      - 'libbaiduprotect\w*\.so'
+      - 'ijiami\.dat|libijm\w*\.so'
+      - 'libnqshield\.so|libnesec\.so|libAPKProtect\.so|libprotectClass\.so'
+      - 'libdexprotector\w*\.so|libdpboot\.so|libalice\.so'
+      - '(?i)libappsealing\.so|libcovault\w*\.so'
+      - 'libjgdtc\.so|libjgbibc\w*\.so'
+
+  - id: OB-HIDDEN-DEX
+    name: DEX/JAR ẩn trong assets hoặc resource
+    category: Obfuscation
+    severity: high
+    mitre: [T1407]
+    target: [filelist]
+    description: >
+      Có file .dex/.jar/.apk nằm trong assets hoặc res. Đây thường là payload được
+      nạp động (dropper) hoặc phần code thật của packer.
+    hint: Giải nén file đó rồi chạy lại rdict trên nó. Nếu bị mã hóa, xem OB-DYNLOAD / BHV-DROPPER-ASSET.
+    any:
+      - '^(?:assets|res)/.*\.(?:dex|jar|apk|zip|bin|dat)$'
+
+  - id: OB-DYNLOAD
+    name: Nạp code động (DexClassLoader)
+    category: Obfuscation
+    severity: high
+    mitre: [T1407]
+    target: [code]
+    description: >
+      Nạp DEX/JAR lúc runtime. Kỹ thuật cốt lõi của packer và malware dropper:
+      code nguy hiểm không có trong APK lúc phân tích tĩnh.
+    hint: >
+      Hook constructor của dalvik.system.DexClassLoader/InMemoryDexClassLoader để lấy
+      đường dẫn hoặc buffer của DEX, rồi dump ra file.
+    api:
+      - 'Ldalvik/system/(?:DexClassLoader|InMemoryDexClassLoader|PathClassLoader|DelegateLastClassLoader|BaseDexClassLoader);-><init>'
+      - 'Ldalvik/system/DexFile;->(?:loadDex|<init>|loadClass)'
+    any:
+      - '\bDexClassLoader\b|\bInMemoryDexClassLoader\b|DexFile\.loadDex\('
+
+  - id: OB-REFLECTION
+    name: Reflection (đã giải tên đích)
+    category: Obfuscation
+    severity: medium
+    mitre: [T1406]
+    target: [code]
+    builtin: reflection
+    description: >
+      Gọi class/method qua reflection. Engine theo dõi hằng string trong thanh ghi nên giải được
+      tên đích (ví dụ Class.forName("java.lang.Runtime").getMethod("exec")). Nếu tên KHÔNG phải
+      hằng số thì nó được tính lúc chạy, khả năng cao là đã bị mã hóa.
+    hint: Hook java.lang.Class.forName và java.lang.reflect.Method.invoke để log tên thật lúc chạy.
+    any:
+      - 'Class\.forName\('
+      - '\.getDeclaredMethod\('
+
+  - id: OB-STRING-DECRYPTOR
+    name: Hàm giải mã string (nghi ngờ)
+    category: Obfuscation
+    severity: medium
+    mitre: [T1406]
+    target: [code]
+    builtin: string_decryptor
+    description: >
+      Method nội bộ trả về String, nhận hằng string/byte làm tham số và được gọi ở nhiều nơi.
+      Đây là dấu hiệu điển hình của string encryption (DexGuard, Allatori, obfuscator tự viết).
+    hint: >
+      Hook method này (đoạn frida bên dưới) để log toàn bộ cặp input → output, hoặc copy logic
+      ra Python để giải mã tĩnh hàng loạt.
+
+  - id: OB-NATIVE-LOAD
+    name: Nạp thư viện native (JNI)
+    category: Obfuscation
+    severity: info
+    target: [code]
+    description: Logic được đẩy xuống thư viện C/C++ (.so). Bạn cần IDA/Ghidra để phân tích phần này.
+    hint: Xem NAT-JNI-BRIDGE để biết method Java nào ứng với hàm native nào.
+    api:
+      - 'Ljava/lang/System;->load(?:Library)?\('
+      - 'Ljava/lang/Runtime;->load(?:Library)?\('
+    any:
+      - 'System\.loadLibrary\("[^"]+"\)'
+
+  - id: OB-XOR
+    name: Giải mã XOR (string/payload obfuscation)
+    category: Obfuscation
+    severity: medium
+    mitre: [T1406]
+    target: [code]
+    description: Vòng lặp XOR với key, kiểu phổ biến nhất để mã hóa string hoặc payload.
+    hint: Copy hàm này ra Python để giải mã hàng loạt, hoặc hook để log output.
+    any:
+      - '\(byte\)\s*\(\s*\w+\[\s*\w+\s*\]\s*\^\s*\w+'
+      - '\(char\)\s*\(\s*\w+\.charAt\(\s*\w+\s*\)\s*\^'
+      - '\^\s*\w+\[\s*\w+\s*%\s*\w+\.length\s*\]'
+      - '\^\s*\w+\.charAt\(\s*\w+\s*%\s*\w+\.length\(\)\s*\)'
+
+  - id: OB-BASE64
+    name: Giải mã Base64
+    category: Obfuscation
+    severity: info
+    target: [code]
+    description: Base64 thường dùng để giấu string, key hoặc payload nhỏ.
+    api:
+      - 'Landroid/util/Base64;->decode'
+      - 'Ljava/util/Base64\$Decoder;->decode'
+    any:
+      - 'Base64\.decode\('
+
+  - id: OB-FW-FLUTTER
+    name: App Flutter
+    category: Framework
+    severity: info
+    target: [filelist]
+    description: Logic Dart được biên dịch AOT vào libapp.so. jadx chỉ thấy phần vỏ.
+    hint: Dùng blutter (worawit/blutter) hoặc reFlutter để khôi phục symbol và hook.
+    any:
+      - 'libflutter\.so'
+      - 'libapp\.so'
+
+  - id: OB-FW-RN
+    name: App React Native
+    category: Framework
+    severity: info
+    target: [filelist]
+    description: Logic nằm trong JS bundle. Nếu bundle là Hermes bytecode thì cần decompile riêng.
+    hint: Mở assets/index.android.bundle. Nếu là Hermes thì dùng hermes-dec hoặc hbctool.
+    any:
+      - 'index\.android\.bundle'
+      - 'libreactnativejni\.so|libhermes\.so'
+
+  - id: OB-FW-UNITY
+    name: App Unity (IL2CPP / Mono)
+    category: Framework
+    severity: info
+    target: [filelist]
+    description: Game Unity. Với IL2CPP, logic C# nằm trong libil2cpp.so kèm global-metadata.dat.
+    hint: Dùng Il2CppDumper hoặc Cpp2IL. Nếu là Mono (Assembly-CSharp.dll) thì mở bằng dnSpy/ILSpy.
+    any:
+      - 'libil2cpp\.so'
+      - 'global-metadata\.dat'
+      - 'Assembly-CSharp\.dll'
+
+  - id: OB-FW-XAMARIN
+    name: App Xamarin / .NET MAUI
+    category: Framework
+    severity: info
+    target: [filelist]
+    description: Logic là .NET assembly, nên jadx không thấy phần chính.
+    hint: Giải nén assemblies (có thể cần pyxamstore để unpack .blob), rồi mở bằng dnSpy/ILSpy.
+    any:
+      - 'libmonodroid\.so|libmonosgen'
+      - 'assemblies/.*\.(?:dll|blob)'
+
+  - id: OB-FW-CORDOVA
+    name: App Cordova / Ionic / Capacitor (WebView hybrid)
+    category: Framework
+    severity: info
+    target: [filelist]
+    description: Logic là HTML/JS trong assets/www hoặc assets/public.
+    hint: Đọc trực tiếp file JS trong assets, có thể cần beautify.
+    any:
+      - '^assets/(?:www|public)/.*\.js$'

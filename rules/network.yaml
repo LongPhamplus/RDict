@@ -1,0 +1,134 @@
+# Mạng, TLS, WebView, endpoint
+rules:
+  - id: NET-INSECURE-TLS
+    name: Vô hiệu hóa kiểm tra TLS (TrustAll / HostnameVerifier)
+    category: Network
+    severity: high
+    mitre: [T1439]
+    target: [code]
+    builtin: insecure_tls
+    description: >
+      Kiểm tra trực tiếp trên bytecode: checkServerTrusted() chỉ có return-void, verify() luôn
+      trả true, getAcceptedIssuers() trả null. Hoặc dùng ALLOW_ALL_HOSTNAME_VERIFIER.
+      Kết quả: dễ bị MITM.
+    fields:
+      - 'ALLOW_ALL_HOSTNAME_VERIFIER'
+    api:
+      - 'Lorg/apache/http/conn/ssl/(?:AllowAllHostnameVerifier|NoopHostnameVerifier);-><init>'
+    any:
+      - 'checkServerTrusted\([^)]*\)\s*(?:throws [\w.,\s]+)?\{\s*\}'
+      - 'ALLOW_ALL_HOSTNAME_VERIFIER|AllowAllHostnameVerifier'
+      - 'boolean verify\(String \w+, SSLSession \w+\)\s*\{\s*return true;'
+
+  - id: NET-WEBVIEW-SSL
+    name: WebView bỏ qua lỗi SSL
+    category: Network
+    severity: high
+    target: [code]
+    description: onReceivedSslError gọi handler.proceed(), nên chấp nhận chứng chỉ sai.
+    api:
+      - 'Landroid/webkit/SslErrorHandler;->proceed'
+    in_method: '^onReceivedSslError$'
+    any:
+      - 'onReceivedSslError\([^)]*\)\s*\{[^}]*\.proceed\(\)'
+
+  - id: NET-CLEARTEXT-URL
+    name: URL HTTP không mã hóa
+    category: Network
+    severity: medium
+    target: [code, resource]
+    description: Endpoint http:// có thể bị nghe lén hoặc sửa trên đường truyền.
+    strings:
+      - '^http://(?!schemas\.android\.com|www\.w3\.org|ns\.adobe\.com|xmlpull\.org|localhost|127\.0\.0\.1|www\.apache\.org|xml\.org|java\.sun\.com|purl\.org)\S{4,}'
+    any:
+      - '"http://(?!schemas\.android\.com|www\.w3\.org|ns\.adobe\.com|xmlpull\.org|localhost|127\.0\.0\.1|www\.apache\.org|xml\.org|java\.sun\.com|purl\.org)[^"\s]{4,}"'
+
+  - id: NET-ENDPOINTS
+    name: Endpoint / URL trong code
+    category: Network
+    severity: info
+    target: [code, resource]
+    description: Các URL HTTPS hardcode, dùng để vẽ bản đồ backend / C2.
+    strings:
+      - '^https://(?!schemas\.android\.com|www\.w3\.org|developer\.android\.com|play\.google\.com/store|goo\.gl|www\.google\.com|github\.com)\S{4,}'
+    any:
+      - '"https://(?!schemas\.android\.com|www\.w3\.org|developer\.android\.com|play\.google\.com/store|goo\.gl|www\.google\.com|github\.com)[^"\s]{4,}"'
+
+  - id: NET-IP
+    name: Địa chỉ IP hardcode
+    category: Network
+    severity: medium
+    target: [code, resource, native]
+    description: IP cứng trong code thường là server nội bộ, môi trường test hoặc C2 của malware.
+    strings:
+      - '^(?:\w+://)?(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:/.*)?$'
+    any:
+      - '"(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?(?:/[^"]*)?"'
+      - '^(?:tcp|udp|https?)://(?:\d{1,3}\.){3}\d{1,3}'
+
+  - id: NET-RETROFIT-API
+    name: Định nghĩa API (Retrofit)
+    category: Network
+    severity: info
+    target: [code]
+    description: Annotation Retrofit cho biết danh sách endpoint REST mà app gọi.
+    any:
+      - '@(?:GET|POST|PUT|DELETE|PATCH|HEAD)\("[^"]*"\)'
+
+  - id: NET-SOCKET
+    name: Socket thô / WebSocket
+    category: Network
+    severity: low
+    target: [code]
+    description: Kết nối socket tự quản lý. Malware hay dùng cách này cho kênh C2.
+    api:
+      - 'Ljava/net/(?:Socket|ServerSocket|DatagramSocket);-><init>'
+      - 'Lokhttp3/OkHttpClient;->newWebSocket'
+    any:
+      - 'new Socket\(|new ServerSocket\(|newWebSocket\('
+
+  - id: NET-WEBVIEW-JS
+    name: WebView bật JavaScript / JS bridge
+    category: WebView
+    severity: medium
+    target: [code]
+    description: >
+      addJavascriptInterface cho phép JS gọi vào code Java. Nếu nạp nội dung không tin cậy
+      thì có thể dẫn tới RCE hoặc lộ dữ liệu.
+    hint: Liệt kê các method có @JavascriptInterface trong class được bridge.
+    api:
+      - 'Landroid/webkit/WebView;->addJavascriptInterface'
+      - 'Landroid/webkit/WebSettings;->setJavaScriptEnabled'
+    any:
+      - 'addJavascriptInterface\('
+      - 'setJavaScriptEnabled\(true\)'
+
+  - id: NET-WEBVIEW-FILE
+    name: WebView cho phép truy cập file
+    category: WebView
+    severity: medium
+    target: [code]
+    description: Cho phép file:// hoặc universal access từ file URL, có thể bị lợi dụng để đọc file nội bộ.
+    api:
+      - 'Landroid/webkit/WebSettings;->setAllow(?:FileAccess|FileAccessFromFileURLs|UniversalAccessFromFileURLs)\('
+    any:
+      - 'setAllow(?:FileAccess|FileAccessFromFileURLs|UniversalAccessFromFileURLs)\(true\)'
+
+  - id: NET-WEBVIEW-INTENT-URL
+    name: WebView nạp URL lấy từ Intent / deep link
+    category: WebView
+    severity: medium
+    target: [code]
+    description: >
+      Trong cùng method, URL được lấy từ Intent (extra / data / query parameter) rồi đưa vào
+      loadUrl. Nếu không lọc thì dẫn tới open redirect, XSS hoặc đánh cắp file qua file://.
+    hint: "adb shell am start -n <pkg>/<activity> --es url 'javascript:alert(1)'  (hoặc file:///data/data/<pkg>/...)"
+    combo:
+      depth: 0
+      groups:
+        - label: Input từ Intent
+          items: ['api:Landroid/content/Intent;->(?:getStringExtra|getData|getDataString|getExtras)', 'api:Landroid/net/Uri;->getQueryParameter']
+        - label: WebView.loadUrl
+          items: ['api:Landroid/webkit/WebView;->loadUrl']
+    any:
+      - '\.loadUrl\([^)]*(?:getStringExtra|getData\(\)|getQueryParameter)'

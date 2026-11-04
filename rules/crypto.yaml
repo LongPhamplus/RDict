@@ -1,0 +1,139 @@
+# Mật mã: key hardcode, thuật toán yếu, điểm vào crypto
+rules:
+  - id: CR-AUTO-DECRYPT
+    name: Dữ liệu mã hóa giải được bằng key hardcode
+    category: Crypto
+    severity: high
+    mitre: [T1521]
+    target: [code]
+    builtin: crypto_autodecrypt
+    description: >
+      rdict đã giải thành công một ciphertext nằm trong app bằng key/IV cũng nằm trong app
+      (thử AES/DES/3DES, ECB/CBC, key dạng hex/base64/chuỗi hoặc MD5/SHA của chuỗi). Padding hợp lệ
+      và plaintext đọc được, nên đây là kết quả đã kiểm chứng, không phải phỏng đoán.
+    hint: >
+      Plaintext thường là flag, mật khẩu, URL C2 hoặc config. Cùng key đó có thể giải được dữ liệu
+      app lưu trên máy hoặc gửi qua mạng.
+  - id: CR-HARDCODED-KEY
+    name: Key mã hóa hardcode
+    category: Crypto
+    severity: high
+    mitre: [T1521]
+    target: [code]
+    description: >
+      SecretKeySpec / IvParameterSpec được tạo từ hằng số trong code (trực tiếp hoặc qua
+      1 tầng gọi). Ai có APK cũng lấy được key này.
+    hint: Lấy hằng số trong note / snippet rồi tự giải mã dữ liệu (CyberChef / Python pycryptodome).
+    combo:
+      depth: 1
+      groups:
+        - label: Tạo key/IV
+          items: ['api:Ljavax/crypto/spec/(?:SecretKeySpec|IvParameterSpec);-><init>']
+        - label: Hằng số giống key
+          items:
+            - 'str:^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{48}|[0-9a-fA-F]{64})$'
+            - 'str:^[A-Za-z0-9+/]{22}==$|^[A-Za-z0-9+/]{43}=$'
+            - 'str:^(?=.*\d)(?=.*[A-Za-z])(?!.*[(). _])(?:.{16}|.{24}|.{32})$'
+    any:
+      - 'new SecretKeySpec\(\s*"[^"]*"\.getBytes'
+      - 'new SecretKeySpec\(\s*new byte\[\]\s*\{'
+      - 'new IvParameterSpec\(\s*"[^"]*"\.getBytes'
+
+  - id: CR-HEX-CONST
+    name: Hằng hex dài (có thể là key / hash)
+    category: Crypto
+    severity: medium
+    target: [code, resource]
+    description: Chuỗi hex 32/48/64 ký tự, thường là key AES-128/192/256 hoặc hash để so sánh.
+    hint: Thử dùng nó làm key, hoặc tra hash trên crackstation.
+    strings:
+      - '^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{48}|[0-9a-fA-F]{64})$'
+    any:
+      - '"(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{48}|[0-9a-fA-F]{64})"'
+
+  - id: CR-CIPHER-USE
+    name: Điểm sử dụng Cipher (entry point để hook)
+    category: Crypto
+    severity: info
+    target: [code]
+    description: Nơi khởi tạo Cipher. Hook doFinal tại đây là thấy plaintext và key.
+    hint: >
+      Hook javax.crypto.Cipher.doFinal và init để dump key/IV/plaintext
+      (frida codeshare: "fadeevab/intercept-android-apk-crypto-operations").
+    api:
+      - 'Ljavax/crypto/Cipher;->getInstance'
+    any:
+      - 'Cipher\.getInstance\([^)]*\)'
+
+  - id: CR-ECB
+    name: Chế độ ECB (không an toàn)
+    category: Crypto
+    severity: medium
+    target: [code]
+    description: AES/ECB làm lộ cấu trúc dữ liệu (các khối giống nhau cho ra ciphertext giống nhau).
+    strings:
+      - '^(?:AES|DES|DESede)/ECB'
+    combo:
+      depth: 0
+      groups:
+        - label: Cipher.getInstance
+          items: ['api:Ljavax/crypto/Cipher;->getInstance']
+        - label: '"AES" không chỉ rõ mode (mặc định ECB)'
+          items: ['str:^AES$']
+    any:
+      - '"AES/ECB[^"]*"'
+      - 'Cipher\.getInstance\(\s*"AES"\s*\)'
+
+  - id: CR-WEAK-CIPHER
+    name: Thuật toán mã hóa yếu (DES/3DES/RC4/Blowfish)
+    category: Crypto
+    severity: medium
+    target: [code]
+    description: Các thuật toán lỗi thời, có thể bị brute-force hoặc có điểm yếu đã biết.
+    strings:
+      - '^(?:DES|DESede|RC4|ARCFOUR|Blowfish|RC2)(?:/.*)?$'
+    any:
+      - 'getInstance\(\s*"(?:DES|DESede|RC4|ARCFOUR|Blowfish|RC2)(?:/[^"]*)?"'
+
+  - id: CR-WEAK-HASH
+    name: Hash yếu (MD5 / SHA-1)
+    category: Crypto
+    severity: low
+    target: [code]
+    description: MD5/SHA-1 không nên dùng cho mật khẩu hay chữ ký. Nếu dùng cho checksum thì ít rủi ro.
+    combo:
+      depth: 0
+      groups:
+        - label: MessageDigest.getInstance
+          items: ['api:Ljava/security/MessageDigest;->getInstance']
+        - label: Thuật toán yếu
+          items: ['str:^(?:MD5|MD4|SHA-?1)$']
+    any:
+      - 'MessageDigest\.getInstance\(\s*"(?:MD5|MD4|SHA-?1)"\s*\)'
+
+  - id: CR-INSECURE-RANDOM
+    name: Random không an toàn / SecureRandom có seed cố định
+    category: Crypto
+    severity: low
+    target: [code]
+    description: >
+      java.util.Random có thể đoán trước được. Còn SecureRandom.setSeed với giá trị cố định
+      thì luôn sinh ra cùng một chuỗi.
+    api:
+      - 'Ljava/util/Random;-><init>'
+      - 'Ljava/security/SecureRandom;->setSeed'
+    any:
+      - 'new Random\(\s*\d*\s*\)'
+
+  - id: CR-KEYSTORE
+    name: Dùng Android Keystore
+    category: Crypto
+    severity: info
+    target: [code]
+    description: Key được lưu trong Keystore phần cứng, nên không lấy được key tĩnh. Hãy hook lúc runtime.
+    strings:
+      - '^AndroidKeyStore$'
+    api:
+      - 'Landroid/security/keystore/KeyGenParameterSpec\$Builder;-><init>'
+    any:
+      - '"AndroidKeyStore"'

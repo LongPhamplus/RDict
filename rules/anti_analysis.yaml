@@ -1,0 +1,219 @@
+# Kỹ thuật chống phân tích: root/debug/emulator/hook detection, tamper check, SSL pinning
+#
+# Khóa bằng chứng (ưu tiên từ trên xuống):
+#   api:     regex trên chữ ký method được invoke   (Lpkg/Cls;->name(args)ret)
+#   strings: regex trên hằng const-string trong bytecode
+#   fields:  regex trên field được đọc/ghi           (Lpkg/Cls;->NAME type)
+#   combo:   nhiều nhóm API phải cùng xuất hiện trong 1 luồng gọi (depth = số tầng gọi)
+#   imports/exports: symbol của ELF (call site thật)
+#   any:     regex trên text — fallback khi không có engine tương ứng / cho manifest, resource, strings .so
+rules:
+  - id: AA-ROOT
+    name: Phát hiện root
+    category: Anti-Analysis
+    severity: medium
+    mitre: [T1633.001]
+    target: [code, resource, native]
+    description: >
+      Ứng dụng kiểm tra thiết bị đã root chưa: tìm binary su, app quản lý root
+      (SuperSU, Magisk), build tag test-keys hoặc dùng thư viện RootBeer.
+    hint: >
+      Hook method chứa check, cho nó trả về false. Có thể dùng Magisk DenyList/Shamiko,
+      hoặc patch smali (const/4 v0, 0x0 trước return).
+    strings:
+      - '^/system/(?:x?bin|app|sd/xbin|bin/failsafe|bin/\.ext)/\.?su$'
+      - '^/sbin/su$|^su$|^which su$'
+      - 'Superuser\.apk|daemonsu|SuperSUDaemon|has_su_daemon|installed_su_daemon'
+      - '^(?:com\.noshufou\.android\.su|eu\.chainfire\.supersu|com\.koushikdutta\.superuser|com\.topjohnwu\.magisk|com\.thirdparty\.superuser|com\.yellowes\.su|com\.kingroot\.kinguser)'
+      - '^test-keys$'
+      - '^/data/local/(?:x?bin|tmp)/'
+      - '(?i)^magisk|^busybox$'
+    api:
+      - 'Lcom/scottyab/rootbeer/RootBeer;->isRooted'
+    any:
+      - '"/system/(?:x?bin|app|sd/xbin|bin/failsafe)/su"'
+      - '"/sbin/su"'
+      - 'Superuser\.apk'
+      - '"test-keys"'
+      - 'new File\([^)]*,\s*"su"\)'
+      - '\bRootBeer\b|isRooted\(\)|isDeviceRooted|checkRoot'
+    refs:
+      - https://mas.owasp.org/MASTG/techniques/android/MASTG-TECH-0037/
+
+  - id: AA-DEBUG
+    name: Phát hiện debugger
+    category: Anti-Analysis
+    severity: medium
+    mitre: [T1622]
+    target: [code]
+    description: >
+      Kiểm tra app có đang bị debug không, qua Debug.isDebuggerConnected(), cờ
+      FLAG_DEBUGGABLE (ApplicationInfo.flags & 2) hoặc đọc TracerPid trong /proc/self/status.
+    hint: >
+      Hook Debug.isDebuggerConnected để trả về false. Với check flags & 2, hãy hook
+      method chứa nó, hoặc build lại APK với debuggable=false.
+    api:
+      - 'Landroid/os/Debug;->(?:isDebuggerConnected|waitingForDebugger)'
+    fields:
+      - 'Landroid/content/pm/ApplicationInfo;->flags'
+    strings:
+      - '^/proc/self/status$|^TracerPid'
+    any:
+      - 'Debug\.isDebuggerConnected\(\)'
+      - 'FLAG_DEBUGGABLE'
+      - '\.flags\s*&\s*2\)'
+      - 'TracerPid'
+
+  - id: AA-EMULATOR
+    name: Phát hiện máy ảo / emulator
+    category: Anti-Analysis
+    severity: medium
+    mitre: [T1633.001]
+    target: [code, native]
+    description: >
+      Phân biệt emulator qua Build.FINGERPRINT/MODEL/HARDWARE (generic, goldfish, ranchu),
+      file qemu, thuộc tính ro.kernel.qemu hoặc IMEI toàn số 0.
+    hint: Hook các field của android.os.Build, hoặc chạy trên thiết bị thật.
+    strings:
+      - '(?i)goldfish|ranchu|qemu_pipe|ro\.kernel\.qemu|qemud|genymotion|bluestacks|vbox86|andy_vm|sdk_gphone|google_sdk|Android SDK built for x86'
+      - '^000000000000000$|^15555215554$'
+    any:
+      - 'goldfish|ranchu|qemu_pipe|ro\.kernel\.qemu|qemud'
+      - '(?i)genymotion|bluestacks|vbox86'
+
+  - id: AA-FRIDA
+    name: Phát hiện Frida / instrumentation
+    category: Anti-Analysis
+    severity: high
+    mitre: [T1622]
+    target: [code, native]
+    description: >
+      Tìm dấu hiệu Frida: chuỗi "frida", port mặc định 27042, thread gum-js-loop/gmain,
+      linjector hoặc quét /proc/self/maps.
+    hint: >
+      Đổi port frida-server (-l 0.0.0.0:1337), dùng bản build đổi tên (strongR-frida),
+      hoặc hook strstr/open/fopen trong libc để giấu chuỗi.
+    strings:
+      - '(?i)^(?=.{0,200}$).*?(?:(?<![a-z])frida(?![a-z])|gum-js-loop|linjector)|^gmain$|^gdbus$'
+      - '^/proc/self/maps$|^/proc/self/task'
+    any:
+      - '(?i)(?<![a-z])frida(?![a-z])'
+      - 'gum-js-loop|\bgmain\b|\bgdbus\b|linjector'
+      - '\b27042\b'
+
+  - id: AA-XPOSED
+    name: Phát hiện Xposed / LSPosed / Substrate
+    category: Anti-Analysis
+    severity: medium
+    mitre: [T1622]
+    target: [code, native]
+    description: Kiểm tra framework hook (Xposed, EdXposed, LSPosed, Cydia Substrate).
+    strings:
+      - '(?i)de\.robv\.android\.xposed|XposedBridge|XposedHelpers|lsposed|edxposed|com\.saurik\.substrate'
+    any:
+      - '(?i)de\.robv\.android\.xposed|XposedBridge|lsposed|edxposed|com\.saurik\.substrate'
+
+  - id: AA-TAMPER-SIG
+    name: Kiểm tra chữ ký (anti-repackaging)
+    category: Anti-Analysis
+    severity: medium
+    mitre: [T1633]
+    target: [code]
+    description: App đọc chữ ký APK để phát hiện bị sửa và ký lại (repackage).
+    hint: >
+      Hook PackageManager.getPackageInfo để trả về chữ ký gốc, hoặc patch so sánh hash.
+      Có thể dùng các công cụ như "APK Signature Killer".
+    fields:
+      - 'Landroid/content/pm/PackageInfo;->(?:signatures|signingInfo)'
+    api:
+      - 'Landroid/content/pm/SigningInfo;->(?:getApkContentsSigners|getSigningCertificateHistory)'
+    any:
+      - 'GET_SIGNATURES|GET_SIGNING_CERTIFICATES'
+      - '\.signatures\b|\.signingInfo\b'
+
+  - id: AA-TAMPER-CRC
+    name: Kiểm tra toàn vẹn classes.dex / APK (CRC, hash)
+    category: Anti-Analysis
+    severity: medium
+    mitre: [T1633]
+    target: [code]
+    description: App tính CRC hoặc hash của classes.dex/APK để phát hiện bị sửa code.
+    hint: Hook ZipEntry.getCrc() hoặc hàm so sánh, cho nó trả về giá trị gốc.
+    combo:
+      depth: 1
+      groups:
+        - label: Tính checksum
+          items: ['api:Ljava/util/zip/ZipEntry;->getCrc', 'api:Ljava/util/zip/CRC32;-><init>', 'api:Ljava/security/MessageDigest;->digest']
+        - label: Đọc chính file APK/DEX
+          items: ['str:^classes\d*\.dex$', 'api:Landroid/content/Context;->getPackageCodePath', 'field:Landroid/content/pm/ApplicationInfo;->(?:sourceDir|publicSourceDir)']
+    all:
+      - 'classes\.dex|getPackageCodePath|sourceDir'
+    any:
+      - '\.getCrc\(\)'
+
+  - id: AA-INSTALLER
+    name: Kiểm tra nguồn cài đặt (installer)
+    category: Anti-Analysis
+    severity: low
+    target: [code]
+    description: Kiểm tra app có được cài từ Google Play không.
+    api:
+      - 'Landroid/content/pm/PackageManager;->(?:getInstallerPackageName|getInstallSourceInfo)'
+    any:
+      - 'getInstallerPackageName\(|getInstallSourceInfo\('
+
+  - id: AA-SSL-PINNING
+    name: SSL / Certificate pinning
+    category: Anti-Analysis
+    severity: medium
+    mitre: [T1521]
+    target: [code, resource]
+    description: App ghim chứng chỉ, nên chặn bắt traffic qua Burp/mitmproxy bằng CA tự cài.
+    hint: >
+      Dùng frida codeshare "akabe1/frida-multiple-unpinning" hoặc objection
+      "android sslpinning disable". Với network_security_config thì sửa XML rồi repack.
+    api:
+      - 'Lokhttp3/CertificatePinner\$Builder;->add'
+      - 'Lcom/datatheorem/android/trustkit/'
+    strings:
+      - '^sha(?:256|1)/[A-Za-z0-9+/=]{20,}$'
+    any:
+      - 'CertificatePinner'
+      - '"sha(?:256|1)/[A-Za-z0-9+/=]{20,}"'
+      - '<pin-set|<pin digest'
+
+  - id: AA-ADB
+    name: Kiểm tra ADB / Developer options
+    category: Anti-Analysis
+    severity: low
+    target: [code]
+    description: Kiểm tra USB debugging hoặc Developer Options có bật không.
+    strings:
+      - '^(?:adb_enabled|development_settings_enabled)$'
+    any:
+      - '"adb_enabled"|ADB_ENABLED|"development_settings_enabled"'
+
+  - id: AA-DETECT-THEN-EXIT
+    name: Phát hiện môi trường phân tích rồi tự thoát
+    category: Anti-Analysis
+    severity: high
+    mitre: [T1633, T1622]
+    target: [code]
+    description: >
+      Trong cùng một luồng gọi có cả bước kiểm tra (root/debug/Frida/emulator) và lệnh kết thúc
+      app (System.exit / killProcess / finish). Đây là mẫu anti-analysis hoàn chỉnh.
+    hint: Hook System.exit / Process.killProcess để không cho app thoát, rồi tìm check ở method trong đường gọi.
+    combo:
+      depth: 2
+      groups:
+        - label: Kiểm tra môi trường
+          items:
+            - 'api:Landroid/os/Debug;->isDebuggerConnected'
+            - 'str:^/system/(?:x?bin|app)/|^su$|^test-keys$|Superuser\.apk'
+            - 'str:(?i)(?<![a-z])(?:frida|xposed|goldfish|qemu)(?![a-z])'
+            - 'field:Landroid/content/pm/ApplicationInfo;->flags'
+        - label: Kết thúc app
+          items:
+            - 'api:Ljava/lang/System;->exit'
+            - 'api:Landroid/os/Process;->killProcess'
+            - 'api:Landroid/app/Activity;->finish(?:Affinity|AndRemoveTask)?\('

@@ -1,0 +1,162 @@
+# Cấu hình AndroidManifest
+rules:
+  - id: MAN-DEBUGGABLE
+    name: App bật debuggable
+    category: Manifest
+    severity: high
+    target: [manifest]
+    description: Có thể gắn debugger (jdb / Android Studio) và chạy run-as để đọc dữ liệu private.
+    hint: "adb shell run-as <pkg>; jdb -attach ..."
+    any:
+      - 'android:debuggable="true"'
+
+  - id: MAN-BACKUP
+    name: Cho phép backup dữ liệu
+    category: Manifest
+    severity: low
+    target: [manifest]
+    description: "adb backup có thể lấy được dữ liệu app (nếu targetSdk < 31 hoặc không có rule loại trừ)."
+    any:
+      - 'android:allowBackup="true"'
+
+  - id: MAN-CLEARTEXT
+    name: Cho phép HTTP cleartext
+    category: Manifest
+    severity: medium
+    target: [manifest, resource]
+    description: usesCleartextTraffic hoặc cleartextTrafficPermitted cho phép HTTP không mã hóa.
+    any:
+      - 'android:usesCleartextTraffic="true"'
+      - 'cleartextTrafficPermitted="true"'
+
+  - id: MAN-USER-CA
+    name: Tin CA do người dùng cài
+    category: Manifest
+    severity: info
+    target: [resource]
+    description: network_security_config tin user CA, nên bắt traffic bằng Burp dễ dàng.
+    any:
+      - '<certificates\s+src="user"'
+
+  - id: MAN-EXPORTED
+    name: Component export không có permission
+    category: Manifest
+    severity: medium
+    target: [manifest]
+    builtin: exported_components
+    description: >
+      Activity/Service/Receiver/Provider mà app khác gọi được (exported=true hoặc có intent-filter)
+      và không có permission bảo vệ. Đây là bề mặt tấn công chính.
+    hint: >
+      Thử gọi trực tiếp: adb shell am start -n <pkg>/<activity>, am startservice, am broadcast,
+      content query --uri content://<authority>/...  (hoặc dùng drozer).
+
+  - id: MAN-DEEPLINK
+    name: Deep link / custom URL scheme
+    category: Manifest
+    severity: info
+    target: [manifest]
+    description: Scheme tùy chỉnh là input từ bên ngoài. Kiểm tra cách app xử lý tham số.
+    hint: adb shell am start -a android.intent.action.VIEW -d "scheme://host/path?x=..."
+    any:
+      - '<data[^>]*android:scheme="(?!http|https)[^"]+"[^>]*>'
+
+  - id: MAN-PROVIDER-GRANT
+    name: ContentProvider grantUriPermissions
+    category: Manifest
+    severity: low
+    target: [manifest]
+    description: Provider cho phép cấp quyền URI. Kiểm tra path traversal và FileProvider với root-path.
+    any:
+      - 'android:grantUriPermissions="true"'
+      - '<root-path'
+
+  - id: MAN-PERM-SMS
+    name: Quyền SMS
+    category: Permissions
+    severity: high
+    mitre: [T1582, T1636.004]
+    target: [manifest]
+    description: Đọc, gửi hoặc nhận SMS. Banking trojan dùng quyền này để đánh cắp OTP.
+    any:
+      - 'android\.permission\.(?:SEND_SMS|READ_SMS|RECEIVE_SMS|RECEIVE_MMS|RECEIVE_WAP_PUSH)'
+
+  - id: MAN-PERM-ACCESSIBILITY
+    name: Accessibility service
+    category: Permissions
+    severity: high
+    mitre: [T1453]
+    target: [manifest]
+    description: >
+      Được đọc nội dung màn hình và tự click thay người dùng. Đây là quyền "vua" của
+      Android banking malware.
+    any:
+      - 'android\.permission\.BIND_ACCESSIBILITY_SERVICE'
+
+  - id: MAN-PERM-DEVICEADMIN
+    name: Device Admin
+    category: Permissions
+    severity: high
+    mitre: [T1626.001]
+    target: [manifest]
+    description: Được khóa máy, xóa dữ liệu và chống bị gỡ cài đặt.
+    any:
+      - 'android\.permission\.BIND_DEVICE_ADMIN'
+
+  - id: MAN-PERM-NOTIF
+    name: Đọc thông báo (NotificationListener)
+    category: Permissions
+    severity: high
+    mitre: [T1517]
+    target: [manifest]
+    description: Đọc được toàn bộ notification, kể cả OTP và tin nhắn từ các app khác.
+    any:
+      - 'android\.permission\.BIND_NOTIFICATION_LISTENER_SERVICE'
+
+  - id: MAN-PERM-OVERLAY
+    name: Vẽ đè lên app khác (overlay)
+    category: Permissions
+    severity: medium
+    mitre: [T1417.002]
+    target: [manifest]
+    description: Có thể dựng màn hình đăng nhập giả đè lên app ngân hàng.
+    any:
+      - 'android\.permission\.SYSTEM_ALERT_WINDOW'
+
+  - id: MAN-PERM-INSTALL
+    name: Cài đặt APK khác
+    category: Permissions
+    severity: medium
+    target: [manifest]
+    description: Có thể là dropper, tải và cài payload thứ cấp.
+    any:
+      - 'android\.permission\.REQUEST_INSTALL_PACKAGES|android\.permission\.INSTALL_PACKAGES'
+
+  - id: MAN-PERM-PRIVACY
+    name: Quyền nhạy cảm về quyền riêng tư
+    category: Permissions
+    severity: low
+    target: [manifest]
+    description: Danh bạ, nhật ký cuộc gọi, micro, camera, vị trí, thông tin điện thoại.
+    any:
+      - 'android\.permission\.(?:READ_CONTACTS|READ_CALL_LOG|PROCESS_OUTGOING_CALLS|RECORD_AUDIO|CAMERA|ACCESS_FINE_LOCATION|ACCESS_BACKGROUND_LOCATION|READ_PHONE_STATE|READ_PHONE_NUMBERS|CALL_PHONE|GET_ACCOUNTS|BODY_SENSORS)'
+
+  - id: MAN-PERM-STORAGE
+    name: Quyền truy cập toàn bộ bộ nhớ / danh sách app
+    category: Permissions
+    severity: low
+    target: [manifest]
+    description: Đọc toàn bộ file hoặc liệt kê mọi app đã cài (thường dùng để tìm app mục tiêu).
+    any:
+      - 'android\.permission\.(?:MANAGE_EXTERNAL_STORAGE|QUERY_ALL_PACKAGES|READ_EXTERNAL_STORAGE|WRITE_EXTERNAL_STORAGE)'
+
+  - id: MAN-PERSIST
+    name: Tự khởi động cùng hệ thống
+    category: Permissions
+    severity: low
+    mitre: [T1624.001]
+    target: [manifest]
+    description: Nhận BOOT_COMPLETED để tự chạy lại sau khi khởi động máy (persistence).
+    any:
+      - 'android\.permission\.RECEIVE_BOOT_COMPLETED'
+      - 'android\.intent\.action\.BOOT_COMPLETED'

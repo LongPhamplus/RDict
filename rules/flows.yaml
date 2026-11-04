@@ -1,0 +1,129 @@
+# Luồng dữ liệu (taint): dữ liệu từ SOURCE thực sự chảy tới SINK (qua biến, field, method, object).
+# Khác combo (chỉ cần 2 API nằm gần nhau), flow chỉ báo khi chính giá trị đó đi từ nguồn tới đích.
+#
+#   flow:
+#     source: ['api:<regex chữ ký>'   giá trị trả về là nguồn
+#              'cb:<regex chữ ký>'    tham số của callback override method framework này là nguồn
+#              'field:<regex field>'] đọc field này là nguồn
+#     sink:   ['<regex chữ ký>']      đối số (trừ receiver) bị bẩn khi gọi API này -> báo
+x-priv-src: &priv_src
+  - 'api:Landroid/telephony/TelephonyManager;->(?:getDeviceId|getImei|getMeid|getSubscriberId|getSimSerialNumber|getLine1Number|getVoiceMailNumber|getCellLocation|getAllCellInfo)\('
+  - 'api:Landroid/location/LocationManager;->(?:getLastKnownLocation|getCurrentLocation)\('
+  - 'api:Landroid/location/Location;->(?:getLatitude|getLongitude)\('
+  - 'cb:Landroid/location/LocationListener;->onLocationChanged\('
+  - 'api:Landroid/accounts/AccountManager;->getAccounts'
+  - 'api:Landroid/net/wifi/WifiInfo;->(?:getMacAddress|getSSID|getBSSID)\('
+  - 'api:Landroid/telephony/(?:gsm/)?SmsMessage;->(?:getMessageBody|getDisplayMessageBody|getOriginatingAddress)\('
+  - 'api:Landroid/content/ClipboardManager;->(?:getPrimaryClip|getText)\('
+  - 'api:Landroid/widget/EditText;->getText\('
+  - 'api:Landroid/content/pm/PackageManager;->(?:getInstalledPackages|getInstalledApplications)\('
+x-leak-sink: &leak_sink
+  - 'Landroid/util/Log;->(?:[vdiwe]|wtf|println)\('
+  - 'Landroid/telephony/(?:gsm/)?SmsManager;->send\w*Message\('
+  - 'Ljava/net/URL;-><init>\('
+  - 'Ljava/io/\w*(?:OutputStream|Writer);->(?:write|append|print\w*)\('
+  - 'Ljava/io/PrintStream;->print'
+  - 'Ljava/net/(?:Http)?URLConnection;->setRequestProperty\('
+  - 'Lorg/apache/http/client/methods/Http\w+;-><init>\('
+  - 'Lokhttp3/Request\$Builder;->(?:url|header|post)\('
+  - 'Landroid/webkit/WebView;->(?:loadUrl|postUrl|loadData\w*|evaluateJavascript)\('
+  - '->(?:startActivit\w*|startService|sendBroadcast\w*|sendOrderedBroadcast|bindService|setResult)\((?:I )?Landroid/content/Intent;'
+x-ext-src: &ext_src
+  - 'api:->getIntent\(\)Landroid/content/Intent;'
+  - 'api:Landroid/content/Intent;->(?:get\w*Extra\w*|getExtras|getData\w*|getAction)\('
+  - 'api:Landroid/os/Bundle;->get\w*\('
+  - 'api:Landroid/net/Uri;->(?:getQueryParameter\w*|getPath|getLastPathSegment|getPathSegments|getFragment)\('
+  - 'cb:Landroid/content/BroadcastReceiver;->onReceive\('
+  - 'cb:Landroid/content/ContentProvider;->(?:query|openFile|insert|update|delete|call)\('
+  - 'cb:Landroid/webkit/WebViewClient;->shouldOverrideUrlLoading\('
+
+rules:
+  # ---------------------------------------------------------------- rò rỉ dữ liệu (malware / privacy)
+  - id: FLOW-PRIVACY-LEAK
+    name: Dữ liệu riêng tư chảy ra ngoài (IMEI, vị trí, SMS, clipboard...)
+    category: Data Flow
+    severity: high
+    mitre: [T1426, T1430, T1636, T1414, T1437]
+    target: [code]
+    description: >
+      Giá trị đọc từ API nhạy cảm (định danh máy, vị trí, SMS, tài khoản, clipboard, ô nhập liệu...) thực sự
+      được truyền tới một kênh ra ngoài: log, SMS, mạng, file, WebView hoặc Intent gửi cho component khác.
+    hint: >
+      Ghi chú "đường dữ liệu" cho biết method chứa nguồn, các method trung gian và chỗ dữ liệu thoát ra.
+      Hook API đích để xem dữ liệu thật đang gửi đi.
+    flow:
+      source: *priv_src
+      sink: *leak_sink
+
+  # ---------------------------------------------------------------- dữ liệu bên ngoài -> chỗ nguy hiểm (pentest)
+  - id: FLOW-RCE
+    name: Dữ liệu từ Intent/Provider đi vào lệnh hệ thống (command injection)
+    category: Data Flow
+    severity: high
+    mitre: [T1623]
+    target: [code]
+    description: Dữ liệu do app khác gửi tới (Intent extra, URI, tham số ContentProvider) được đưa vào Runtime.exec / ProcessBuilder.
+    hint: Gửi Intent tới component exported (adb shell am start / am broadcast --es key 'a; id') rồi xem lệnh được chạy.
+    flow:
+      source: *ext_src
+      sink:
+        - 'Ljava/lang/Runtime;->exec\('
+        - 'Ljava/lang/ProcessBuilder;-><init>\('
+        - 'Ljava/lang/ProcessBuilder;->command\('
+
+  - id: FLOW-SQLI
+    name: Dữ liệu từ Intent/Provider đi vào câu SQL (SQL injection)
+    category: Data Flow
+    severity: high
+    target: [code]
+    description: Dữ liệu bên ngoài được nối vào câu lệnh SQL (rawQuery / execSQL / selection của query) thay vì dùng tham số "?".
+    hint: Thử payload "' OR 1=1--" qua extra / tham số provider (content query --uri ... --where).
+    flow:
+      source: *ext_src
+      sink:
+        - 'Landroid/database/sqlite/SQLiteDatabase;->(?:rawQuery\w*|execSQL)\('
+        - 'Landroid/database/sqlite/SQLiteDatabase;->query\w*\('
+        - 'Landroid/database/sqlite/SQLiteQueryBuilder;->(?:query|appendWhere)\w*\('
+
+  - id: FLOW-WEBVIEW-LOAD
+    name: Dữ liệu từ Intent/deep link đi vào WebView (open redirect / XSS / đánh cắp file)
+    category: Data Flow
+    severity: high
+    target: [code]
+    description: URL hoặc nội dung do bên ngoài kiểm soát được nạp vào WebView. Nguy hiểm hơn nếu WebView bật JavaScript / addJavascriptInterface / file access.
+    hint: adb shell am start -d "scheme://host?url=https://attacker" ... hoặc javascript:/file:// URL.
+    flow:
+      source: *ext_src
+      sink:
+        - 'Landroid/webkit/WebView;->(?:loadUrl|postUrl|loadData\w*|evaluateJavascript)\('
+
+  - id: FLOW-PATH-TRAVERSAL
+    name: Dữ liệu từ Intent/Provider đi vào đường dẫn file (path traversal)
+    category: Data Flow
+    severity: high
+    target: [code]
+    description: Tên/đường dẫn file lấy từ bên ngoài được dùng để mở/ghi file, có thể đọc/ghi file ngoài thư mục dự kiến (../../).
+    hint: Thử "../../../../data/data/<pkg>/shared_prefs/x.xml" qua tham số provider/Intent.
+    flow:
+      source: *ext_src
+      sink:
+        - 'Ljava/io/File;-><init>\('
+        - 'Ljava/io/File(?:Input|Output)Stream;-><init>\('
+        - 'Ljava/io/FileReader;-><init>\('
+        - 'Landroid/os/ParcelFileDescriptor;->open\('
+
+  - id: FLOW-INTENT-REDIRECT
+    name: Intent nhận từ bên ngoài được gửi tiếp (intent redirection)
+    category: Data Flow
+    severity: medium
+    target: [code]
+    description: >
+      Intent (hoặc dữ liệu) do app khác gửi tới được dùng để startActivity / sendBroadcast tiếp, cho phép
+      app tấn công mở component không exported bằng quyền của app này.
+    hint: Gửi Intent chứa extra là một Intent khác trỏ tới component nội bộ.
+    flow:
+      source:
+        - 'api:Landroid/content/Intent;->getParcelableExtra\w*\('
+        - 'api:Landroid/os/Bundle;->getParcelable\w*\('
+      sink:
+        - '->(?:startActivit\w*|startService|sendBroadcast\w*|bindService)\((?:I )?Landroid/content/Intent;'

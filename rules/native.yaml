@@ -1,0 +1,220 @@
+# Thư viện native (.so) — imports/exports = call site thật (●●○), any = strings có/không xref
+rules:
+  - id: NAT-JNI-BRIDGE
+    name: Cầu nối Java ↔ native (method native)
+    category: Native
+    severity: info
+    target: [code]
+    builtin: jni_bridge
+    description: >
+      Mỗi method native bên Java được ghép với hàm Java_* tương ứng trong .so (theo quy tắc
+      mangling JNI). Nếu không có export tương ứng thì method đó được đăng ký động bằng RegisterNatives.
+    hint: Frida - Interceptor.attach(Process.getModuleByName('libX.so').getExportByName('Java_...'), ...)
+    any:
+      - '^\s*(?:(?:public|private|protected|static|final)\s+)*native\s+[\w.\[\]<>]+\s+\w+\s*\('
+
+  - id: NAT-JNI-EXPORT
+    name: Hàm JNI export (Java_*)
+    category: Native
+    severity: info
+    target: [native]
+    description: Hàm native được gọi từ Java qua static registration. Đây là điểm vào để phân tích trong IDA/Ghidra.
+    hint: Trong IDA/Ghidra, đổi kiểu tham số đầu thành JNIEnv* để đọc dễ hơn.
+    exports:
+      - '^Java_'
+
+  - id: NAT-JNI-ONLOAD
+    name: JNI_OnLoad (dynamic registration)
+    category: Native
+    severity: medium
+    target: [native]
+    description: >
+      Thư viện có JNI_OnLoad, thường dùng để RegisterNatives (giấu tên hàm) và chạy anti-debug sớm.
+    hint: Hook RegisterNatives (đọc từ JNIEnv vtable, offset 215) để lấy địa chỉ thật của từng method.
+    exports:
+      - '^JNI_OnLoad$'
+
+  - id: NAT-INIT-ARRAY
+    name: Code chạy tự động khi nạp thư viện (.init_array)
+    category: Anti-Analysis
+    severity: medium
+    target: [native]
+    builtin: native_init_array
+    description: >
+      Hàm trong .init_array / JNI_OnLoad chạy ngay khi System.loadLibrary(), trước mọi hàm JNI.
+      Đây là chỗ ưa thích để đặt anti-debug, anti-Frida và giải mã string.
+    hint: >
+      Đặt breakpoint ở linker (call_constructors / soinfo::call_constructors) để dừng trước khi
+      hàm này chạy, hoặc hook android_dlopen_ext rồi patch.
+
+  - id: NAT-PTRACE
+    name: Anti-debug native (ptrace / TracerPid)
+    category: Anti-Analysis
+    severity: high
+    mitre: [T1622]
+    target: [native]
+    description: >
+      Gọi ptrace (thường là tự ptrace chính nó, hoặc fork một process con để attach)
+      để chặn gdb/frida attach, hoặc đọc TracerPid.
+    hint: >
+      Hook ptrace trả về 0, hoặc patch lệnh gọi trong IDA. Nếu có fork kèm ptrace thì
+      process con đang giữ slot tracer.
+    imports:
+      - '^ptrace$'
+    any:
+      - 'TracerPid'
+      - '^/proc/self/status$|^/proc/%d/status$'
+
+  - id: NAT-SELF-INTEGRITY
+    name: Quét bộ nhớ process / anti-hook trong native
+    category: Anti-Analysis
+    severity: medium
+    target: [native]
+    description: Đọc /proc/self/maps hoặc duyệt các module đã nạp để phát hiện Frida agent, inline hook, trampoline.
+    imports:
+      - '^dl_iterate_phdr$'
+    any:
+      - '/proc/self/maps|/proc/%d/maps'
+
+  - id: NAT-STRSTR-SCAN
+    name: Tìm chuỗi trong dữ liệu đọc được (strstr/strcmp)
+    category: Anti-Analysis
+    severity: low
+    target: [native]
+    description: >
+      strstr/strcmp trên dữ liệu đọc từ /proc thường là cách tìm "frida", "xposed"... Xem đường gọi
+      để biết check nằm ở đâu.
+    hint: Hook strstr, log cả 2 tham số để thấy app đang tìm chuỗi gì.
+    imports:
+      - '^(?:strstr|strcasestr)$'
+
+  - id: NAT-ANTI-DUMP
+    name: Anti-dump (inotify / /proc/self/mem)
+    category: Anti-Analysis
+    severity: medium
+    target: [native]
+    description: inotify theo dõi việc truy cập /proc/self/mem hoặc pagemap để phát hiện memory dump.
+    imports:
+      - '^inotify_(?:init1?|add_watch)$'
+    any:
+      - '/proc/self/mem|/proc/self/pagemap'
+
+  - id: NAT-KILL
+    name: Tự kết thúc process từ native
+    category: Anti-Analysis
+    severity: low
+    target: [native]
+    description: Gọi _exit/abort/kill/raise, thường là phản ứng sau khi phát hiện debugger hoặc hook.
+    hint: Đường gọi tới đây cho biết check nào đã kích hoạt. Hook để vô hiệu hóa (Interceptor.replace).
+    imports:
+      - '^(?:_exit|kill|tgkill|raise)$'
+
+  - id: NAT-THREAD
+    name: Tạo thread nền trong native (watchdog)
+    category: Anti-Analysis
+    severity: low
+    target: [native]
+    description: pthread_create trong native, thường dùng cho vòng lặp anti-debug/anti-Frida chạy liên tục.
+    imports:
+      - '^pthread_create$'
+
+  - id: NAT-SYSCALL
+    name: Gọi syscall trực tiếp
+    category: Anti-Analysis
+    severity: low
+    target: [native]
+    description: Dùng syscall() thay cho hàm libc để né hook libc.
+    hint: Hook ở tầng kernel (strace / seccomp) hoặc tìm instruction svc #0 trong IDA.
+    imports:
+      - '^syscall$'
+
+  - id: NAT-CRYPTO
+    name: Mật mã trong native
+    category: Crypto
+    severity: info
+    target: [native]
+    description: Thư viện có dùng crypto (OpenSSL/BoringSSL/mbedTLS).
+    hint: Tìm các crypto constant như S-box, hoặc dùng plugin findcrypt cho IDA/Ghidra.
+    imports:
+      - '^(?:EVP_|AES_|RSA_|SHA256_|MD5_|mbedtls_)\w+'
+
+  - id: NAT-DLOPEN
+    name: Nạp thư viện / resolve symbol lúc chạy (dlopen/dlsym)
+    category: Obfuscation
+    severity: low
+    target: [native]
+    description: Resolve hàm lúc runtime, dùng để giấu import hoặc nạp payload .so khác.
+    imports:
+      - '^(?:dlopen|dlsym|android_dlopen_ext)$'
+
+  - id: NAT-MPROTECT
+    name: Tự sửa code (mprotect)
+    category: Obfuscation
+    severity: medium
+    target: [native]
+    description: Đổi quyền vùng nhớ để giải mã hoặc unpack code lúc chạy (self-modifying / packer native).
+    hint: Đặt breakpoint sau mprotect rồi dump vùng nhớ đã giải mã.
+    imports:
+      - '^mprotect$'
+
+  - id: NAT-ENTROPY
+    name: Section có entropy cao (bị pack / mã hóa)
+    category: Obfuscation
+    severity: high
+    target: [native]
+    builtin: native_entropy
+    description: Section có entropy > 7.2, tức dữ liệu nén hoặc mã hóa. Code thật chỉ xuất hiện lúc chạy.
+
+  - id: NAT-STRIPPED-SECTIONS
+    name: Section header bị xóa
+    category: Anti-Analysis
+    severity: medium
+    target: [native]
+    builtin: native_stripped
+    description: ELF không có section header, làm IDA/Ghidra/readelf phân tích sai.
+    hint: Dựng lại section header từ program header (SoFixer) trước khi đưa vào IDA.
+
+  # ---------------------------------------------------------------- giả lập (unicorn): thứ không nằm sẵn trong file
+  - id: NAT-CMP-CONST
+    name: So sánh input với hằng trong native (mật khẩu / flag / chuỗi phát hiện)
+    category: Anti-Analysis
+    severity: medium
+    target: [native]
+    builtin: native_cmp_const
+    description: >
+      Giả lập tuyến tính từng hàm và đọc đối số tại mỗi lời gọi strcmp/strncmp/memcmp/strstr. Chuỗi hằng được
+      so sánh thường là mật khẩu/flag (crackme), hoặc tên công cụ cần phát hiện (frida, xposed, magisk...).
+    hint: Hook hàm so sánh (Interceptor.attach strncmp) hoặc dùng luôn chuỗi đã tìm ra.
+
+  - id: NAT-STACK-STRING
+    name: Chuỗi dựng trên stack (giấu chuỗi khỏi .rodata)
+    category: Obfuscation
+    severity: medium
+    target: [native]
+    builtin: native_stack_strings
+    description: >
+      Chuỗi được ghép từng byte/khối bằng lệnh mov/str lên stack nên không xuất hiện trong strings của file.
+      Đây là kỹ thuật giấu chuỗi hay gặp trong malware và lớp bảo vệ native.
+    hint: Đặt breakpoint sau đoạn dựng chuỗi, hoặc dùng chính danh sách chuỗi trong ghi chú.
+
+  - id: NAT-INIT-DECRYPT
+    name: Chuỗi được giải mã khi nạp thư viện (.init_array / JNI_OnLoad)
+    category: Obfuscation
+    severity: high
+    target: [native]
+    builtin: native_init_decrypt
+    description: >
+      Giả lập các hàm chạy lúc nạp thư viện rồi so sánh .data/.bss trước/sau: chuỗi mới xuất hiện là chuỗi đã
+      được giải mã (URL C2, tên hàm, đường dẫn...).
+    hint: Dump .data sau khi thư viện được nạp (Frida - Module.findBaseAddress + Memory.readByteArray).
+
+  - id: NAT-REGISTER-NATIVES
+    name: Method native đăng ký động (RegisterNatives)
+    category: Obfuscation
+    severity: medium
+    target: [native]
+    builtin: native_register_natives
+    description: >
+      Giả lập JNI_OnLoad với JNIEnv giả để đọc bảng RegisterNatives: method Java nào được nối tới hàm C nào,
+      dù tên hàm C không được export.
+    hint: "Bắt đầu phân tích từ địa chỉ hàm trong ghi chú (IDA/Ghidra: phím G rồi nhập địa chỉ)."

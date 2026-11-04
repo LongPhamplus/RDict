@@ -1,0 +1,440 @@
+# Hành vi đáng ngờ (malware-like), lưu trữ dữ liệu, và các COMBO hành vi
+rules:
+  # ============================================================ COMBO (●●●)
+  - id: BHV-SMS-EXFIL
+    name: Đọc SMS/OTP rồi gửi ra ngoài
+    category: Behavior
+    severity: high
+    mitre: [T1636.004, T1646]
+    target: [code]
+    description: Trong cùng luồng gọi có bước đọc nội dung SMS và bước gửi dữ liệu ra ngoài (HTTP / socket / SMS).
+    combo:
+      depth: 2
+      groups:
+        - label: Đọc SMS
+          items: ['api:Landroid/telephony/SmsMessage;->(?:createFromPdu|getMessageBody|getDisplayMessageBody|getOriginatingAddress)', 'str:^content://sms', 'api:Landroid/provider/Telephony\$Sms\$Intents;->getMessagesFromIntent']
+        - label: Gửi ra ngoài
+          items: ['api:Ljava/net/URL;->openConnection', 'api:Ljava/net/HttpURLConnection;->', 'api:Lokhttp3/(?:OkHttpClient;->newCall|Call;->(?:execute|enqueue))', 'api:Ljava/net/Socket;->getOutputStream', 'api:Landroid/telephony/SmsManager;->send']
+
+  - id: BHV-DEVICEID-EXFIL
+    name: Thu thập định danh thiết bị rồi gửi qua mạng
+    category: Behavior
+    severity: medium
+    mitre: [T1426, T1646]
+    target: [code]
+    description: IMEI/IMSI/số điện thoại/ANDROID_ID được lấy và gửi đi trong cùng luồng gọi (fingerprinting, tracking).
+    combo:
+      depth: 2
+      groups:
+        - label: Lấy định danh
+          items: ['api:Landroid/telephony/TelephonyManager;->(?:getDeviceId|getImei|getMeid|getSubscriberId|getLine1Number|getSimSerialNumber)', 'str:^android_id$']
+        - label: Gửi qua mạng
+          items: ['api:Ljava/net/URL;->openConnection', 'api:Lokhttp3/(?:OkHttpClient;->newCall|Call;->(?:execute|enqueue))', 'api:Ljava/net/Socket;->getOutputStream']
+
+  - id: BHV-DROPPER
+    name: Tải code từ mạng rồi nạp động (dropper)
+    category: Behavior
+    severity: high
+    mitre: [T1407]
+    target: [code]
+    description: Luồng gọi vừa tải dữ liệu qua mạng vừa nạp DEX/JAR bằng ClassLoader. Đây là mẫu dropper / update payload.
+    hint: Hook DexClassLoader.<init> và chặn traffic để lấy payload thứ cấp.
+    combo:
+      depth: 2
+      groups:
+        - label: Tải về
+          items: ['api:Ljava/net/URL;->openConnection', 'api:Lokhttp3/Call;->(?:execute|enqueue)', 'api:Landroid/app/DownloadManager;->enqueue']
+        - label: Nạp code
+          items: ['api:Ldalvik/system/(?:DexClassLoader|InMemoryDexClassLoader|PathClassLoader);-><init>', 'api:Ldalvik/system/DexFile;->loadDex']
+
+  - id: BHV-DROPPER-ASSET
+    name: Giải nén payload từ assets rồi nạp động (packer / dropper)
+    category: Behavior
+    severity: high
+    mitre: [T1407, T1406.002]
+    target: [code]
+    description: Đọc file trong assets, ghi ra đĩa rồi nạp bằng ClassLoader. Đây là cách các packer khởi động code thật.
+    hint: Hook DexClassLoader.<init> để lấy đường dẫn file đã giải mã, rồi adb pull file đó về.
+    combo:
+      depth: 2
+      groups:
+        - label: Đọc assets
+          items: ['api:Landroid/content/res/AssetManager;->open']
+        - label: Ghi file
+          items: ['api:Ljava/io/FileOutputStream;-><init>', 'api:Ljava/nio/file/Files;->write']
+        - label: Nạp code
+          items: ['api:Ldalvik/system/(?:DexClassLoader|InMemoryDexClassLoader|PathClassLoader);-><init>', 'api:Ldalvik/system/DexFile;->loadDex']
+
+  - id: BHV-KEYLOG-A11Y
+    name: Keylogger qua Accessibility
+    category: Behavior
+    severity: high
+    mitre: [T1417.001]
+    target: [code]
+    description: Đọc text từ AccessibilityEvent / Node rồi lưu lại hoặc gửi đi.
+    combo:
+      depth: 2
+      groups:
+        - label: Đọc text UI
+          items: ['api:Landroid/view/accessibility/AccessibilityEvent;->getText', 'api:Landroid/view/accessibility/AccessibilityNodeInfo;->getText']
+        - label: Lưu / gửi
+          items: ['api:Ljava/net/URL;->openConnection', 'api:Lokhttp3/', 'api:Landroid/content/SharedPreferences\$Editor;->putString', 'api:Ljava/io/FileOutputStream;-><init>', 'api:Ljava/io/FileWriter;-><init>']
+
+  # ============================================================ API đơn lẻ (●●○)
+  - id: BH-SMS-SEND
+    name: Gửi SMS
+    category: Behavior
+    severity: high
+    mitre: [T1582]
+    target: [code]
+    description: Gửi SMS từ code (SMS premium fraud, lây lan, gửi OTP ra ngoài).
+    api:
+      - 'Landroid/telephony/SmsManager;->send(?:Text|MultipartText|Data)Message'
+    any:
+      - 'sendTextMessage\(|sendMultipartTextMessage\(|sendDataMessage\('
+
+  - id: BH-SMS-READ
+    name: Đọc / chặn SMS
+    category: Behavior
+    severity: high
+    mitre: [T1636.004]
+    target: [code]
+    description: Đọc hộp thư SMS hoặc bắt SMS đến (đánh cắp OTP).
+    strings:
+      - '^content://sms'
+      - '^android\.provider\.Telephony\.SMS_RECEIVED$'
+    api:
+      - 'Landroid/telephony/SmsMessage;->(?:createFromPdu|getMessageBody|getDisplayMessageBody)'
+      - 'Landroid/provider/Telephony\$Sms\$Intents;->getMessagesFromIntent'
+    any:
+      - '"content://sms'
+      - 'getMessageBody\(\)|createFromPdu\('
+
+  - id: BH-ACCESSIBILITY
+    name: Lạm dụng Accessibility
+    category: Behavior
+    severity: high
+    mitre: [T1453]
+    target: [code]
+    description: Service đọc sự kiện UI, tự thực hiện thao tác (click, gesture), có thể dùng làm keylogger.
+    api:
+      - 'Landroid/accessibilityservice/AccessibilityService;->(?:performGlobalAction|dispatchGesture|getRootInActiveWindow)'
+      - 'Landroid/view/accessibility/AccessibilityNodeInfo;->(?:performAction|findAccessibilityNodeInfosByViewId|findAccessibilityNodeInfosByText)'
+    any:
+      - 'extends AccessibilityService'
+      - 'performGlobalAction\(|dispatchGesture\('
+
+  - id: BH-OVERLAY
+    name: Tạo overlay cửa sổ
+    category: Behavior
+    severity: medium
+    mitre: [T1417.002]
+    target: [code]
+    description: Hiển thị cửa sổ đè lên app khác (phishing, clickjacking).
+    api:
+      - 'Landroid/provider/Settings;->canDrawOverlays'
+      - 'Landroid/view/WindowManager;->addView'
+    any:
+      - 'TYPE_APPLICATION_OVERLAY|TYPE_SYSTEM_ALERT|TYPE_SYSTEM_OVERLAY'
+      - 'canDrawOverlays\('
+
+  - id: BH-HIDE-ICON
+    name: Ẩn icon / tắt component
+    category: Behavior
+    severity: medium
+    mitre: [T1628.001]
+    target: [code]
+    description: setComponentEnabledSetting, thường dùng để tắt launcher activity (ẩn app khỏi màn hình chính).
+    hint: Xem tham số thứ 2. Giá trị 2 (COMPONENT_ENABLED_STATE_DISABLED) áp lên launcher activity tức là app đang ẩn icon.
+    api:
+      - 'Landroid/content/pm/PackageManager;->setComponentEnabledSetting'
+    any:
+      - 'setComponentEnabledSetting\('
+
+  - id: BH-EXEC
+    name: Chạy lệnh shell
+    category: Behavior
+    severity: medium
+    mitre: [T1623.001]
+    target: [code]
+    description: Thực thi lệnh hệ thống. Kiểm tra lệnh có lấy từ input bên ngoài không (command injection).
+    hint: Hook java.lang.Runtime.exec và ProcessBuilder.start để log lệnh thật.
+    api:
+      - 'Ljava/lang/Runtime;->exec'
+      - 'Ljava/lang/ProcessBuilder;->(?:<init>|start)'
+    any:
+      - 'Runtime\.getRuntime\(\)\.exec\('
+      - 'new ProcessBuilder\('
+
+  - id: BH-SU-EXEC
+    name: Thực thi lệnh với quyền root (su)
+    category: Behavior
+    severity: high
+    mitre: [T1626]
+    target: [code]
+    description: App chủ động gọi su để chạy lệnh với quyền root.
+    combo:
+      depth: 0
+      groups:
+        - label: exec
+          items: ['api:Ljava/lang/Runtime;->exec', 'api:Ljava/lang/ProcessBuilder;-><init>']
+        - label: '"su"'
+          items: ['str:^su$|^su -c|^/system/x?bin/su$']
+    any:
+      - 'exec\(\s*"su"'
+      - '"su",\s*"-c"'
+
+  - id: BH-DEVICE-ID
+    name: Thu thập định danh thiết bị
+    category: Behavior
+    severity: low
+    mitre: [T1426]
+    target: [code]
+    description: Lấy IMEI, IMSI, số điện thoại, ANDROID_ID hoặc serial (fingerprinting / tracking).
+    api:
+      - 'Landroid/telephony/TelephonyManager;->(?:getDeviceId|getImei|getMeid|getSubscriberId|getLine1Number|getSimSerialNumber)'
+      - 'Landroid/os/Build;->getSerial'
+    fields:
+      - 'Landroid/os/Build;->SERIAL'
+    strings:
+      - '^android_id$'
+    any:
+      - 'getDeviceId\(|getImei\(|getSubscriberId\(|getLine1Number\('
+
+  - id: BH-INSTALLED-APPS
+    name: Liệt kê app đã cài
+    category: Behavior
+    severity: low
+    mitre: [T1418]
+    target: [code]
+    description: Malware ngân hàng dùng cách này để biết nạn nhân có app nào và chọn overlay tương ứng.
+    api:
+      - 'Landroid/content/pm/PackageManager;->(?:getInstalledPackages|getInstalledApplications|queryIntentActivities)'
+    any:
+      - 'getInstalledPackages\(|getInstalledApplications\('
+
+  - id: BH-CLIPBOARD
+    name: Đọc / ghi clipboard
+    category: Behavior
+    severity: low
+    mitre: [T1414]
+    target: [code]
+    description: Đọc clipboard, có thể đánh cắp mật khẩu hoặc tráo địa chỉ ví crypto (clipper).
+    api:
+      - 'Landroid/content/ClipboardManager;->(?:getPrimaryClip|setPrimaryClip|addPrimaryClipChangedListener)'
+    any:
+      - 'getPrimaryClip\(|setPrimaryClip\('
+
+  - id: BH-SCREEN-CAPTURE
+    name: Chụp / quay màn hình
+    category: Behavior
+    severity: medium
+    mitre: [T1513]
+    target: [code]
+    description: MediaProjection cho phép quay toàn bộ màn hình.
+    api:
+      - 'Landroid/media/projection/MediaProjection(?:Manager)?;->(?:createVirtualDisplay|createScreenCaptureIntent|getMediaProjection)'
+    any:
+      - 'MediaProjection|createVirtualDisplay\('
+
+  - id: BH-AUDIO
+    name: Ghi âm
+    category: Behavior
+    severity: medium
+    mitre: [T1429]
+    target: [code]
+    description: Ghi âm micro hoặc cuộc gọi.
+    api:
+      - 'Landroid/media/MediaRecorder;->setAudioSource'
+      - 'Landroid/media/AudioRecord;-><init>'
+    any:
+      - 'new MediaRecorder\(|new AudioRecord\('
+
+  - id: BH-LOCATION
+    name: Theo dõi vị trí
+    category: Behavior
+    severity: low
+    mitre: [T1430]
+    target: [code]
+    description: Lấy vị trí GPS / network.
+    api:
+      - 'Landroid/location/LocationManager;->(?:getLastKnownLocation|requestLocationUpdates|getCurrentLocation)'
+      - 'Lcom/google/android/gms/location/FusedLocationProviderClient;->'
+    any:
+      - 'getLastKnownLocation\(|requestLocationUpdates\('
+
+  - id: BH-CONTACTS-CALLS
+    name: Đọc danh bạ / nhật ký cuộc gọi
+    category: Behavior
+    severity: medium
+    mitre: [T1636.002, T1636.003]
+    target: [code]
+    description: Thu thập danh bạ và lịch sử cuộc gọi.
+    fields:
+      - 'Landroid/provider/ContactsContract\$\w+;->CONTENT_URI'
+      - 'Landroid/provider/CallLog\$Calls;->CONTENT_URI'
+    strings:
+      - '^content://(?:contacts|com\.android\.contacts|call_log)'
+    any:
+      - 'ContactsContract\.|CallLog\.Calls'
+
+  - id: BH-INSTALL-APK
+    name: Cài đặt APK từ code
+    category: Behavior
+    severity: high
+    mitre: [T1407]
+    target: [code]
+    description: Tải và cài một APK khác (dropper).
+    strings:
+      - '^application/vnd\.android\.package-archive$'
+    api:
+      - 'Landroid/content/pm/PackageInstaller;->createSession'
+      - 'Landroid/content/pm/PackageInstaller\$Session;->commit'
+    any:
+      - '"application/vnd\.android\.package-archive"'
+
+  - id: BH-DEVICE-ADMIN
+    name: Dùng quyền Device Admin
+    category: Behavior
+    severity: high
+    mitre: [T1626.001]
+    target: [code]
+    description: Khóa máy, xóa dữ liệu, đổi mật khẩu khóa màn hình (ransomware).
+    api:
+      - 'Landroid/app/admin/DevicePolicyManager;->(?:lockNow|wipeData|resetPassword|isAdminActive)'
+    strings:
+      - '^android\.app\.action\.ADD_DEVICE_ADMIN$'
+    any:
+      - '\.lockNow\(|\.wipeData\(|ACTION_ADD_DEVICE_ADMIN'
+
+  - id: BH-NOTIF-LISTENER
+    name: Đọc notification của app khác
+    category: Behavior
+    severity: high
+    mitre: [T1517]
+    target: [code]
+    description: Đọc nội dung thông báo (OTP, tin nhắn chat).
+    api:
+      - 'Landroid/service/notification/StatusBarNotification;->(?:getNotification|getPackageName)'
+      - 'Landroid/service/notification/NotificationListenerService;->(?:getActiveNotifications|cancelNotification)'
+    any:
+      - 'extends NotificationListenerService'
+      - 'onNotificationPosted\('
+
+  - id: BH-PERSIST
+    name: Persistence (boot / alarm / job)
+    category: Behavior
+    severity: low
+    mitre: [T1624.001, T1603]
+    target: [code]
+    description: Tự chạy lại sau khi reboot hoặc theo lịch.
+    strings:
+      - '^android\.intent\.action\.BOOT_COMPLETED$'
+    api:
+      - 'Landroid/app/AlarmManager;->(?:setRepeating|setExactAndAllowWhileIdle|setAlarmClock)'
+      - 'Landroid/app/job/JobScheduler;->schedule'
+    any:
+      - 'ACTION_BOOT_COMPLETED|"android\.intent\.action\.BOOT_COMPLETED"'
+
+  - id: BH-BATTERY-OPT
+    name: Xin bỏ qua tối ưu pin
+    category: Behavior
+    severity: low
+    target: [code]
+    description: Xin chạy nền liên tục, malware dùng để không bị hệ thống kill.
+    strings:
+      - '^android\.settings\.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS$'
+    api:
+      - 'Landroid/os/PowerManager;->isIgnoringBatteryOptimizations'
+    any:
+      - 'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'
+
+  # ============================================================ Storage / data leak
+  - id: ST-WORLD-RW
+    name: File world-readable / writeable
+    category: Storage
+    severity: high
+    target: [code]
+    description: File hoặc SharedPreferences mà app khác đọc, ghi được.
+    any:
+      - 'MODE_WORLD_READABLE|MODE_WORLD_WRITEABLE'
+      - 'openFileOutput\([^,]+,\s*[123]\)'
+      - 'setReadable\(true,\s*false\)|setWritable\(true,\s*false\)'
+
+  - id: ST-EXTERNAL
+    name: Ghi dữ liệu ra bộ nhớ ngoài
+    category: Storage
+    severity: low
+    target: [code]
+    description: Dữ liệu trên external storage có thể bị app khác đọc.
+    api:
+      - 'Landroid/os/Environment;->getExternalStorage(?:Directory|PublicDirectory)'
+      - 'Landroid/content/Context;->getExternalFilesDir'
+    any:
+      - 'getExternalStorageDirectory\(|getExternalFilesDir\('
+
+  - id: ST-SQLI
+    name: SQL ghép chuỗi (SQL injection)
+    category: Storage
+    severity: medium
+    target: [code]
+    description: rawQuery/execSQL nhận câu SQL được ghép bằng StringBuilder/concat trong cùng method.
+    hint: "Thử payload ' OR 1=1 --  vào input tương ứng; với ContentProvider exported thì dùng: content query --uri ... --where \"1=1) --\""
+    combo:
+      depth: 0
+      groups:
+        - label: Thực thi SQL
+          items: ['api:Landroid/database/sqlite/SQLiteDatabase;->(?:rawQuery|execSQL)']
+        - label: Ghép chuỗi
+          items: ['api:Ljava/lang/StringBuilder;->append', 'api:Ljava/lang/String;->(?:concat|format)']
+    any:
+      - '(?:rawQuery|execSQL)\(\s*"[^"]*"\s*\+'
+      - '(?:rawQuery|execSQL)\(\s*\w+\s*\+'
+
+  - id: ST-SENSITIVE-LOG
+    name: Log dữ liệu nhạy cảm
+    category: Storage
+    severity: medium
+    target: [code]
+    ignore_case: true
+    description: Ghi password, token hoặc thẻ ra logcat. Có thể đọc bằng adb logcat.
+    combo:
+      depth: 0
+      groups:
+        - label: Log
+          items: ['api:Landroid/util/Log;->[dviwe]\(', 'api:Ljava/io/PrintStream;->print']
+        - label: Từ khóa nhạy cảm
+          items: ['str:password|passwd|token|secret|credit|card|\bpin\b|\botp\b|cvv']
+    any:
+      - 'Log\.[dviwe]\([^;]*(?:password|passwd|pwd|token|secret|credit|card|pin|otp|cvv)'
+
+  - id: ST-PREFS-SECRET
+    name: Lưu bí mật vào SharedPreferences
+    category: Storage
+    severity: medium
+    target: [code]
+    ignore_case: true
+    description: SharedPreferences là XML plaintext trong /data/data/<pkg>/shared_prefs.
+    combo:
+      depth: 0
+      groups:
+        - label: putString
+          items: ['api:Landroid/content/SharedPreferences\$Editor;->put(?:String|Int)']
+        - label: Key nhạy cảm
+          items: ['str:^\w*(?:password|passwd|pwd|pin|token|secret|session|card)\w*$']
+    any:
+      - 'put(?:String|Int)\(\s*"\w*(?:password|passwd|pwd|pin|token|secret|session|card)\w*"'
+
+  - id: ST-SQLITE
+    name: Dùng database SQLite / Realm
+    category: Storage
+    severity: info
+    target: [code]
+    description: Nơi lưu dữ liệu local. Hãy kiểm tra file DB trong /data/data/<pkg>/databases.
+    api:
+      - 'Landroid/database/sqlite/SQLiteOpenHelper;-><init>'
+      - 'Landroid/content/Context;->openOrCreateDatabase'
+      - 'Lnet/sqlcipher/'
+      - 'Lio/realm/Realm;->getInstance'
+    any:
+      - 'extends SQLiteOpenHelper|openOrCreateDatabase\('
