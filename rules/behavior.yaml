@@ -438,3 +438,45 @@ rules:
       - 'Lio/realm/Realm;->getInstance'
     any:
       - 'extends SQLiteOpenHelper|openOrCreateDatabase\('
+
+  - id: BHV-TIME-BOMB
+    name: Bom hẹn giờ (chỉ chạy sau một thời điểm / sau N ngày kể từ khi cài)
+    category: Behavior
+    severity: high
+    mitre: [T1497.003]
+    target: [code]
+    builtin: gate_time
+    description: >
+      Lệnh if so sánh thời gian hiện tại (currentTimeMillis / Calendar / Date) với một thời điểm cố định, hoặc so
+      khoảng thời gian kể từ firstInstallTime với một hằng số. Malware dùng cách này để "ngủ" qua giai đoạn
+      kiểm duyệt của store và sandbox, rồi mới bật hành vi độc hại.
+    hint: >
+      Dùng --gate-script để sinh script Frida đẩy System.currentTimeMillis tới sau mốc thời gian, hoặc chỉnh
+      đồng hồ thiết bị. Xem các dòng 🔒 ở những bằng chứng khác để biết hành vi nào bị chặn sau mốc này.
+
+  - id: BHV-SECRET-GATE
+    name: Cổng mở khóa bằng chuỗi hằng (lệnh C2 / mật khẩu / mã kích hoạt)
+    category: Behavior
+    severity: medium
+    mitre: [T1480]
+    target: [code]
+    builtin: gate_secret
+    description: >
+      Dữ liệu từ bên ngoài (SMS, push, JSON từ server, intent extra, ô nhập liệu, clipboard...) được so khớp với
+      chuỗi hằng trong if. Đây thường là bảng lệnh C2 ("sms_send", "lock"...), mật khẩu ẩn, hoặc mã kích hoạt.
+      Nếu so sánh trên hash (MessageDigest) thì chuỗi hằng là hash, không đảo ngược tĩnh được.
+    hint: >
+      Chuỗi hằng chính là "chìa khóa": gửi đúng chuỗi đó qua kênh tương ứng, hoặc dùng --gate-script để ép
+      String.equals trả về true với các chuỗi này.
+
+  - id: BHV-GEO-GATE
+    name: Chỉ kích hoạt theo quốc gia / ngôn ngữ (geofencing)
+    category: Behavior
+    severity: medium
+    mitre: [T1480, T1614.001]
+    target: [code]
+    builtin: gate_geo
+    description: >
+      Lệnh if so khớp mã quốc gia của SIM/mạng, Locale hoặc múi giờ với một giá trị cố định. Malware thường chỉ
+      tấn công một số nước (banking trojan nhắm theo vùng), hoặc tự tắt ở một số nước (ví dụ khối CIS).
+    hint: Dùng --gate-script để ép getSimCountryIso / getCountry trả về đúng mã quốc gia cần thiết.

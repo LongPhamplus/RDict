@@ -11,6 +11,7 @@ BUILTINS = {
     "exported_components", "reflection", "string_decryptor", "jni_bridge",
     "native_init_array", "native_entropy", "native_stripped", "insecure_tls", "crypto_autodecrypt",
     "native_cmp_const", "native_stack_strings", "native_init_decrypt", "native_register_natives", "payload_dex",
+    "gate_time", "gate_secret", "gate_geo",
 }
 
 

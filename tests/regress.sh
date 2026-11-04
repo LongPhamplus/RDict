@@ -50,4 +50,23 @@ got=$($PY tests/flowtags.py tests/apps/t8/t8.apk 2>/dev/null)
 want="UPLOAD http://c2.evil-panel.top/s?d="
 [ "$got" = "$want" ] && echo "ok   t8 payload: $got" || { echo "FAIL t8: '$got' (mong đợi '$want')"; fail=1; }
 check tests/apps/t8/t8.apk OB-PAYLOAD-DEX FLOW-PRIVACY-LEAK BHV-DROPPER-ASSET
+# t9: cổng chặn (anti-emulator, geofence, time bomb tuyệt đối + trì hoãn sau cài, lệnh C2 qua SMS, mật khẩu ô nhập);
+# mồi: throttle cache (now - last > 1h) và so action Intent không được báo; script Frida ép đủ các cổng
+check tests/apps/t9/t9.apk BHV-TIME-BOMB BHV-SECRET-GATE BHV-GEO-GATE FLOW-PRIVACY-LEAK
+$PY rdict.py tests/apps/t9/t9.apk -q -i BHV- -i FLOW --json "$OUT/g.json" --gate-script "$OUT/g.js" >/dev/null 2>&1
+python3 - "$OUT/g.json" "$OUT/g.js" <<'PY' || fail=1
+import json, sys
+d = json.load(open(sys.argv[1])); js = open(sys.argv[2]).read()
+n = {f["id"]: len(f["hits"]) for f in d["findings"]}
+gates = {g["cond"] for f in d["findings"] for h in f["hits"] for g in h.get("gates") or []}
+bad = []
+if n.get("BHV-TIME-BOMB") != 2: bad.append(f"time bomb {n.get('BHV-TIME-BOMB')} hit (mong đợi 2)")
+if n.get("BHV-SECRET-GATE") != 2: bad.append(f"secret gate {n.get('BHV-SECRET-GATE')} hit (mong đợi 2)")
+for w in ["!Env.isEmulator()", "1798761600000", "> 259200000", '.equals("#steal")', '.equals("ru")']:
+    if not any(w in g for g in gates): bad.append("thiếu cổng " + w)
+for w in ['"0p3n-s3s4m3"', '"#steal"', '"isEmulator", [], false', '"getSimCountryIso", [], "us"', "1798761600001", "+ 259260000"]:
+    if w not in js: bad.append("script thiếu " + w)
+print(("FAIL t9 gates: " + "; ".join(bad)) if bad else f"ok   t9 gates: {len(gates)} cổng, script đủ")
+sys.exit(1 if bad else 0)
+PY
 rm -rf "$OUT"; exit $fail

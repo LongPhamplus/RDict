@@ -55,6 +55,7 @@ rdict app.apk --no-dex / --no-native   # tắt từng engine
 rdict app.apk --no-flow / --no-emu     # tắt phân tích luồng / giả lập native
 rdict app.apk --flow-budget 60         # giới hạn thời gian phân tích luồng (giây, mặc định 180)
 rdict app.apk --flow-libs              # phân tích luồng cả trong thư viện (chậm hơn nhiều)
+rdict app.apk --gate-script gates.js     # script Frida ép các điều kiện chặn (🔒) về phía mở khóa
 
 rdict -l                               # xem từ điển (cột Engine cho biết rule dùng engine nào)
 rdict -e BHV-SMS-EXFIL                 # chi tiết một rule
@@ -189,6 +190,58 @@ DroidBench nhóm Native: 5/5 (trước: 1/5).
 Rule: `FLOW-PRIVACY-LEAK`, `FLOW-RCE`, `FLOW-SQLI`, `FLOW-WEBVIEW-LOAD`, `FLOW-PATH-TRAVERSAL`, `FLOW-INTENT-REDIRECT`.
 Đích native dùng chữ ký giả `Lnative/libc;-><hàm>()V`, nên có thể thêm vào `sink:` của rule.
 
+## Cổng chặn (🔒) và logic bomb
+
+Malware hay giấu hành vi sau một điều kiện: không chạy trên máy ảo, chỉ chạy sau ngày X hoặc sau N ngày kể từ khi
+cài, chỉ chạy khi nhận đúng lệnh C2, hoặc chỉ ở một số nước. Phân tích luồng là tĩnh nên vẫn thấy hành vi phía sau.
+Ngoài ra rdict chỉ ra **điều kiện phải đúng để tới được đó**:
+
+```
+📄 Net.java:14  → com.rdict.t9.Net.post()   ●●● hành vi
+   match: getSimSerialNumber() ⟶ java.io.OutputStream.write
+   🔒 cần 🛡 !Env.isEmulator()                                              [MainActivity.onCreate]
+   🔒 cần ⏰ (System.currentTimeMillis() - ...firstInstallTime) > 259200000 [MainActivity.onCreate]
+   🔒 cần 🌍 !this.getSystemService("phone").getSimCountryIso().equals("ru") [MainActivity.onCreate]
+```
+
+- **Cách tìm** (`rdict_core/gates.py`): một `if` chặn lệnh L khi chỉ một nhánh của nó tới được L, và L không quay lại
+  được `if` đó (bỏ qua điều kiện vòng lặp). Xét trong method chứa L và tại các chỗ gọi dọc đường từ entry point
+  (với luồng dữ liệu thì dọc đường dữ liệu, kể cả điều kiện quanh chỗ đọc nguồn). Có nhiều chỗ gọi thì chỉ giữ điều
+  kiện chung cho mọi chỗ gọi.
+- **Dựng biểu thức**: lùi ngược trong block và predecessor để ghép lời gọi, hằng, field, `cmp-long`, phép toán.
+  Biểu thức được in ở chiều cần thỏa.
+- **Phân loại**:
+  - 🛡 env: root/emulator/debug/Frida. Với method bị obfuscate như `c.a()`, xét thân hàm: chuỗi `su`, `test-keys`,
+    `Build.TAGS`...
+  - ⏰ time, 🌍 geo.
+  - 🔑 secret: dữ liệu vào (SMS, JSON, extra, ô nhập...) so với chuỗi hằng.
+  - ⚙ other.
+  - Bỏ qua null-check và `SDK_INT`.
+
+Rule mới dùng cùng engine:
+
+| Rule | Bắt gì |
+|---|---|
+| `BHV-TIME-BOMB` | so `currentTimeMillis`/`Calendar`/`Date` với mốc 2014–2040, hoặc `now - firstInstallTime > N` (không báo throttle kiểu `now - last > 1h`) |
+| `BHV-SECRET-GATE` | dữ liệu từ ngoài `.equals/startsWith/...("hằng")`: bảng lệnh C2, mật khẩu ẩn, mã kích hoạt (so trên hash thì ghi rõ) |
+| `BHV-GEO-GATE` | `getSimCountryIso`/`Locale`/`TimeZone` so với hằng |
+
+**Mở khóa trên thiết bị**: `--gate-script` sinh script Frida ép mọi cổng 🔒 trong báo cáo về phía mở khóa.
+
+```bash
+rdict app.apk --gate-script gates.js
+frida -U -f <pkg> -l gates.js
+```
+
+| Loại cổng | Script làm gì |
+|---|---|
+| method boolean của app (`isEmulator`, `c.a()`...) | trả về giá trị cần |
+| `String.equals("hằng")` | trả `true` |
+| `getSimCountryIso`/`getCountry` | trả mã nước cần |
+| `currentTimeMillis` | kẹp sau mốc thời gian, hoặc cộng thêm N ms cho kiểu trì hoãn sau khi cài |
+
+Cổng ⚙ other được để dạng comment, bỏ comment nếu muốn ép. Class nạp muộn (payload) được thử hook lại.
+
 ## Payload DEX ẩn (dropper / packer)
 
 Khi nạp APK, rdict đọc 8 byte đầu của **mọi** file (không xét đuôi, vì payload hay đội lốt `.png`/`.bin`). Các dạng tìm được:
@@ -215,7 +268,7 @@ dùng Frida hook `DexClassLoader` để dump.
 - `NAT-CMP-CONST`: đối số thật của `strcmp/strncmp/strstr/memcmp/fopen...`, ví dụ UnCrackable L2 → `strncmp(…, 'Thanks for all the fish')`.
 - `NAT-REGISTER-NATIVES`: method Java ↔ hàm native đăng ký động; `NAT-JNI-BRIDGE` cũng dùng kết quả này.
 
-Kiểm thử: `tests/regress.sh` (build app test t2–t8 rồi kiểm tra rule mong đợi; t7 cần `pip install ziglang` trong
+Kiểm thử: `tests/regress.sh` (build app test t2–t9 rồi kiểm tra rule mong đợi; t7 cần `pip install ziglang` trong
 `.venv` để biên dịch chéo `libt7.so` arm64), `tests/flowtags.py app.apk [-v]` (liệt kê luồng theo tag, `-v` in tóm tắt JNI),
 `bench/run.py out.json` (`NO_NATIVE=1` để tắt nạp lib native)
 (DroidBench, clone vào `~/.cache/rdict/bench/DroidBench`; `bench/dbg.py <app>` để xem chi tiết luồng), `tests/flowtags.py <apk>` (liệt kê luồng theo tag của sink).
@@ -265,7 +318,7 @@ rules:
 
 Builtin (logic Python, không viết được bằng regex): `reflection`, `string_decryptor`, `insecure_tls`,
 `jni_bridge`, `crypto_autodecrypt`, `exported_components`, `native_init_array`, `native_entropy`, `native_stripped`,
-`native_cmp_const`, `native_stack_strings`, `native_init_decrypt`, `native_register_natives`, `payload_dex`.
+`native_cmp_const`, `native_stack_strings`, `native_init_decrypt`, `native_register_natives`, `payload_dex`, `gate_time`, `gate_secret`, `gate_geo`.
 
 ## Hạn chế / hướng phát triển
 
@@ -275,6 +328,9 @@ Builtin (logic Python, không viết được bằng regex): `reflection`, `stri
   không phân biệt object (2 object cùng class dùng chung field); thứ tự đọc/ghi field không được xét. Code nạp động chỉ theo được khi payload nằm sẵn trong APK (dạng trần, zip hoặc XOR 1 byte); native chỉ xấp xỉ
   (xem phần JNI): chuỗi tên method bị mã hóa trong `.so` thì không ghép được, trừ khi giả lập dựng ra trên stack.
   App lớn có thể chạm ngân sách thời gian (báo cáo ghi "truncated").
+- Cổng chặn: điều kiện qua `switch` (kể cả `switch` trên String), qua biến cờ lưu vào field, hoặc nằm trong native thì
+  chưa dựng được. Script chỉ ép được method boolean, `equals` với hằng, getter quốc gia và đồng hồ. So khớp trên hash
+  thì không đảo ngược tĩnh được.
 - Giả lập native: quét tuyến tính từng hàm, không giải điều kiện; hàm cần dữ liệu từ Java/thiết bị có thể không ra chuỗi.
   Giả lập chưa hỗ trợ ARM32 (phân tích tĩnh ARM32 thì có).
 - Native: ABI ưu tiên arm64 → armv7 → armeabi → x86_64 → x86 (khi bench/test tự giải nén lib).

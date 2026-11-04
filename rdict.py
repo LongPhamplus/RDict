@@ -56,7 +56,8 @@ except ImportError as e:
 VERSION = "0.3.0"
 DEFAULT_RULES = ROOT / "rules"
 CACHE_DIR = Path(os.environ.get("RDICT_CACHE", Path.home() / ".cache" / "rdict"))
-DEX_BUILTINS = {"reflection", "string_decryptor", "insecure_tls", "jni_bridge", "crypto_autodecrypt", "payload_dex"}
+DEX_BUILTINS = {"reflection", "string_decryptor", "insecure_tls", "jni_bridge", "crypto_autodecrypt", "payload_dex",
+                "gate_time", "gate_secret", "gate_geo"}
 NATIVE_BUILTINS = {"native_init_array", "native_entropy", "native_stripped", "native_cmp_const",
                    "native_stack_strings", "native_init_decrypt", "native_register_natives"}
 
@@ -224,6 +225,8 @@ class Scanner:
             return self.dex.builtin_insecure_tls(ctx)
         if b == "payload_dex":
             return self.dex.builtin_payload_dex(ctx)
+        if b.startswith("gate_"):
+            return self.dex.builtin_gate(b[5:], ctx)
         if b == "jni_bridge":
             return self.jni_bridge()
         out = []
@@ -343,6 +346,8 @@ def main() -> None:
     g.add_argument("--frida-script", type=Path, metavar="FILE", help="Chỉ sinh script Frida để tự chạy tay")
     g.add_argument("--strings", type=Path, metavar="FILE", help="Nạp chuỗi đã giải (JSON của rdict, hoặc log của frida -l)")
     g.add_argument("--dump-strings", action="store_true", help="In toàn bộ chuỗi đã giải mã")
+    ap.add_argument("--gate-script", type=Path, metavar="FILE",
+                    help="Sinh script Frida ép các điều kiện chặn (🔒) về phía mở khóa: frida -U -f <pkg> -l FILE")
     ap.add_argument("-q", "--quiet", action="store_true", help="Không in chi tiết (dùng với --json/--md)")
     args = ap.parse_args()
 
@@ -473,6 +478,13 @@ def main() -> None:
     if args.md:
         report.write_markdown(args.md, data)
         console.print(f"[green]✓ Markdown: {args.md}[/]")
+    if args.gate_script:
+        from rdict_core import gate_script
+        gs = gate_script.collect(findings)
+        pkg = dex.apk.get_package() if dex and dex.apk else "<package>"
+        args.gate_script.write_text(gate_script.make(gs, pkg, args.gate_script.name))
+        console.print(f"[green]✓ Script ép {len(gs)} điều kiện chặn: {args.gate_script}[/]\n"
+                      f"  Chạy: [bold]frida -U -f {pkg} -l {args.gate_script}[/]")
 
 
 if __name__ == "__main__":
